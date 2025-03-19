@@ -17,7 +17,7 @@ public class V2021_11_02_13_31__Update_Processing_Evidence_Type_Translations imp
         List<ProcessingEvidenceType> processingEvidenceTypeList = Queries.getAll(em, ProcessingEvidenceType.class);
 
         for (ProcessingEvidenceType processingEvidenceType : processingEvidenceTypeList) {
-            for (Language language : List.of(Language.EN, Language.DE, Language.RW, Language.ES)) {
+            for (Language language : List.of(Language.EN, Language.DE, Language.FR, Language.RW, Language.ES)) {
                 ProcessingEvidenceTypeTranslation processingEvidenceTypeTranslation = new ProcessingEvidenceTypeTranslation();
                 processingEvidenceTypeTranslation.setLabel(processingEvidenceType.getLabel());
                 processingEvidenceTypeTranslation.setLanguage(language);

@@ -32,9 +32,9 @@ public class SpringSecurityConfig {
     }
 
 	private static final String[] SWAGGER_EXCEPTIONS = new String[] {
-        "/v3/api-docs",
-        "/v3/api-docs/swagger-config",
-        "/swagger-ui/**"
+        "/api/v3/api-docs",
+        "/api/v3/api-docs/swagger-config",
+        "/api/swagger-ui/**"
 	};
 
 	@Bean

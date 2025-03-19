@@ -44,6 +44,7 @@ import org.torpedoquery.jakarta.jpa.Function;
 import org.torpedoquery.jakarta.jpa.OnGoingLogicalCondition;
 import org.torpedoquery.jakarta.jpa.Torpedo;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -245,13 +246,16 @@ public class UserService extends BaseService {
 							"<p>Please approve the registrant as soon as possible</p>"
 			);
 
-			String htmlMail = notificationEngine.createEmailConfirmationEmail(createUserRequest.name,
-					createUserRequest.surname, emailConfirmationUrl + ctPair.getRight());
-			mailEngine.sendSimpleMailAsync(createUserRequest.email, "",
-					"INATrace registration",
-					"",
-					htmlMail);
-		} else {
+
+            String htmlMail = notificationEngine.createEmailConfirmationEmail(createUserRequest.name,
+                    createUserRequest.surname, emailConfirmationUrl + ctPair.getRight());
+            mailEngine.sendSimpleMailAsync(createUserRequest.email, "",
+                    "INATrace registration",
+                    "",
+                    htmlMail);
+
+
+        } else {
 
 			// In 'DEMO' environment, set the new user as ACTIVE and add it to the demo companies
 			user.setStatus(UserStatus.ACTIVE);

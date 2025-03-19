@@ -17,7 +17,7 @@ public class V2021_11_02_10_07__Update_Processing_Evidence_Field_Translations im
         List<ProcessingEvidenceField> processingEvidenceFieldList = Queries.getAll(em, ProcessingEvidenceField.class);
 
         for (ProcessingEvidenceField processingEvidenceField : processingEvidenceFieldList) {
-            for (Language language : List.of(Language.EN, Language.DE, Language.RW, Language.ES)) {
+            for (Language language : List.of(Language.EN, Language.DE, Language.FR, Language.RW, Language.ES)) {
                 ProcessingEvidenceFieldTranslation processingEvidenceFieldTranslation = new ProcessingEvidenceFieldTranslation();
                 processingEvidenceFieldTranslation.setLabel(processingEvidenceField.getLabel());
                 processingEvidenceFieldTranslation.setLanguage(language);
