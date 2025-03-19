@@ -2,11 +2,8 @@ package com.abelium.inatrace.db.entities.stockorder;
 
 import com.abelium.inatrace.db.base.TimestampEntity;
 import com.abelium.inatrace.db.entities.common.Document;
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.ManyToOne;
-import jakarta.persistence.OneToOne;
-import jakarta.persistence.Version;
+import jakarta.persistence.*;
+
 import java.time.Instant;
 
 @Entity
@@ -15,7 +12,8 @@ public class Certification extends TimestampEntity {
 	@Version
 	private Long entityVersion;
 
-	@OneToOne
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "certificate_id", nullable = true)
 	private Document certificate;
 	
 	@Column

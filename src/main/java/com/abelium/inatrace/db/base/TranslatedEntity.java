@@ -14,7 +14,7 @@ import java.util.EnumSet;
 @MappedSuperclass
 public class TranslatedEntity extends BaseEntity {
 	
-	public static final EnumSet<Language> ALLOWED_TRANSLATIONS = EnumSet.of(Language.EN, Language.DE, Language.RW, Language.ES);
+	public static final EnumSet<Language> ALLOWED_TRANSLATIONS = EnumSet.of(Language.EN, Language.DE,Language.FR, Language.RW, Language.ES);
 	
 	@Enumerated(EnumType.STRING)
     @Column(nullable = false, length = Lengths.ENUM)

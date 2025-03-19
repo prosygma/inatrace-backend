@@ -145,7 +145,7 @@ Resources are annotated with Swagger annotations version `1.5.13`. After the app
 Using Postman, you can create a collection from the Swagger definition.
 
 - Select `Import > Link`
-- Enter [http://localhost:8080/v2/api-docs](http://localhost:8080/v2/api-docs)
+- Enter [http://localhost:8080/api/v3/api-docs](http://localhost:8080/v2/api-docs)
 - Click `Continue`
 - Review configuration
 - Click `Import`

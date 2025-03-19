@@ -1,2 +1,0 @@
-DROP TABLE Product_keyMarketsShare;
-DROP TABLE ProductLabelContent_keyMarketsShare;

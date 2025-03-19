@@ -955,7 +955,6 @@ public class StockOrderService extends BaseService {
 
         // Fetch the facility and check that the request user is enrolled in the facility's company
         Facility facility = facilityService.fetchFacility(apiStockOrder.getFacility().getId());
-
         // In some cases we don't need to check if request user is enrolled in company due to already
         // executed checks (approve/reject quote order transaction, etc.)
         if (checkCompanyEnrolment) {
@@ -1120,9 +1119,10 @@ public class StockOrderService extends BaseService {
 
                 break;
             case GENERAL_ORDER:
-
+//                logger.info(facilityService.fetchFacility(apiStockOrder.getQuoteFacility()));
+//                System.out.println(apiStockOrder.getQuoteFacility().toString());
                 // Set the quote facility and quote company
-                entity.setQuoteFacility(facilityService.fetchFacility(apiStockOrder.getQuoteFacility().getId()));
+                entity.setQuoteFacility(facility);
                 entity.setQuoteCompany(entity.getQuoteFacility().getCompany());
 
             case TRANSFER_ORDER:
