@@ -6,6 +6,7 @@ package com.abelium.inatrace.types;
 public enum Language {
 	EN,
 	DE,
+	FR,
 	RW,
 	ES
 }

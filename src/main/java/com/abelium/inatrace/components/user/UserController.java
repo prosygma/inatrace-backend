@@ -19,6 +19,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 
+import java.io.IOException;
+
 @RestController
 @RequestMapping("/user")
 public class UserController {
@@ -46,7 +48,7 @@ public class UserController {
     
     @PostMapping(value = "/register")
     @Operation(summary = "Create a new user (not activated)")
-    public ApiDefaultResponse createUser(@Valid @RequestBody ApiCreateUserRequest request) throws ApiException {
+    public ApiDefaultResponse createUser(@Valid @RequestBody ApiCreateUserRequest request) throws ApiException, IOException {
 		userEngine.createUser(request);
 		return new ApiDefaultResponse();
     }

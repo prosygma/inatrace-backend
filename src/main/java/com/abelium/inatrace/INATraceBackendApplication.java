@@ -20,7 +20,6 @@ public class INATraceBackendApplication {
 
 	@PostConstruct
 	private void init() {
-
 		// Set default timezone to UTC, so we don't have trouble with persisting LocalDate
 		// fields in MySQL (DB should also run in UTC timezone - by default MySQL does so)
 		TimeZone.setDefault(TimeZone.getTimeZone("UTC"));

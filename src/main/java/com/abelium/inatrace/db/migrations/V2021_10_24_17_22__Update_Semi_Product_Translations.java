@@ -20,7 +20,7 @@ public class V2021_10_24_17_22__Update_Semi_Product_Translations implements JpaM
         List<SemiProduct> semiProductList = Queries.getAll(em, SemiProduct.class);
 
         for (SemiProduct semiProduct : semiProductList) {
-            for (Language language : List.of(Language.EN, Language.DE, Language.RW, Language.ES)) {
+            for (Language language : List.of(Language.EN, Language.DE, Language.FR, Language.RW, Language.ES)) {
                 SemiProductTranslation semiProductTranslation = new SemiProductTranslation();
                 semiProductTranslation.setName(semiProduct.getName());
                 semiProductTranslation.setDescription(semiProduct.getDescription());
