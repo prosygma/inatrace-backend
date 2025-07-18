@@ -63,6 +63,7 @@ GET	/api/chain/semi-product/list/by-value-chains	SemiProductController#getSemiPr
 GET	/api/chain/semi-product/{id}	SemiProductController#getSemiProduct
 GET	/api/chain/semi-product/{id}/detail	SemiProductController#getSemiProductDetails
 GET	/api/chain/stock-order/export/deliveries/company/{companyId}	StockOrderController#exportDeliveriesByCompany
+GET	/api/chain/stock-order/export/placed-orders/company/{companyId}	StockOrderController#exportOrdersByCompany
 GET	/api/chain/stock-order/list/company/{companyId}	StockOrderController#getStockOrderListByCompanyId
 GET	/api/chain/stock-order/list/company/{companyId}/orders-for-customers	StockOrderController#getStockOrdersInFacilityForCustomer
 GET	/api/chain/stock-order/list/company/{companyId}/quote-orders	StockOrderController#getQuoteOrdersInFacility
@@ -72,6 +73,7 @@ GET	/api/chain/stock-order/{id}	StockOrderController#getStockOrder
 GET	/api/chain/stock-order/{id}/aggregated-history	StockOrderController#getStockOrderAggregatedHistory
 GET	/api/chain/stock-order/{id}/exportGeoData	StockOrderController#exportGeoData
 GET	/api/chain/stock-order/{id}/processing-order	StockOrderController#getStockOrderProcessingOrder
+GET	/api/chain/stock-order/{stockOrderId}/aggregated-history-export	StockOrderController#exportStockOrderAggregatedHistory
 GET	/api/chain/transaction/list/input/stock-order/{stockOrderId}	TransactionController#getStockOrderInputTransactions
 GET	/api/chain/value-chain/list	ValueChainController#getValueChainList
 GET	/api/chain/value-chain/{id}	ValueChainController#getValueChain
