@@ -12,6 +12,7 @@ import com.abelium.inatrace.components.codebook.semiproduct.SemiProductService;
 import com.abelium.inatrace.components.common.BaseService;
 import com.abelium.inatrace.components.common.api.ApiActivityProof;
 import com.abelium.inatrace.components.common.api.ApiCertification;
+import com.abelium.inatrace.components.common.api.ApiDocument;
 import com.abelium.inatrace.components.company.CompanyApiTools;
 import com.abelium.inatrace.components.company.CompanyQueries;
 import com.abelium.inatrace.components.currencies.CurrencyService;
@@ -58,12 +59,12 @@ import jakarta.persistence.TypedQuery;
 import jakarta.transaction.Transactional;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.poi.ss.usermodel.CellStyle;
-import org.apache.poi.ss.usermodel.CellType;
-import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.common.usermodel.HyperlinkType;
+import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.MessageSource;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -101,6 +102,9 @@ public class StockOrderService extends BaseService {
     private final CompanyQueries companyQueries;
 
     private final MessageSource messageSource;
+
+    @Value("${INATrace.fe.url}") // URL_LINK depuis application.properties
+    private String baseUrl;
 
     @Autowired
     public StockOrderService(FacilityService facilityService,
@@ -1106,13 +1110,18 @@ public class StockOrderService extends BaseService {
 
                     Document activityProofDoc = fetchEntity(apiAP.getDocument().getId(), Document.class);
 
+                    // Créer et persister ActivityProof d'abord
+                    ActivityProof activityProof = new ActivityProof();
+                    activityProof.setDocument(activityProofDoc);
+                    activityProof.setFormalCreationDate(apiAP.getFormalCreationDate());
+                    activityProof.setType(apiAP.getType());
+                    activityProof.setValidUntil(apiAP.getValidUntil());
+                    em.persist(activityProof); // Persistez explicitement
+
+                    // Créer ensuite StockOrderActivityProof
                     StockOrderActivityProof stockOrderActivityProof = new StockOrderActivityProof();
                     stockOrderActivityProof.setStockOrder(entity);
-                    stockOrderActivityProof.setActivityProof(new ActivityProof());
-                    stockOrderActivityProof.getActivityProof().setDocument(activityProofDoc);
-                    stockOrderActivityProof.getActivityProof().setFormalCreationDate(apiAP.getFormalCreationDate());
-                    stockOrderActivityProof.getActivityProof().setType(apiAP.getType());
-                    stockOrderActivityProof.getActivityProof().setValidUntil(apiAP.getValidUntil());
+                    stockOrderActivityProof.setActivityProof(activityProof); // Référence à l'entité persistée
 
                     entity.getActivityProofs().add(stockOrderActivityProof);
                 }
@@ -1718,4 +1727,396 @@ public class StockOrderService extends BaseService {
         // if areaSum is < 0, polygon order is counter-clockwise
         return areaSum < 0;
     }
+
+    // export placed orders
+
+    public byte[] exportOrdersByCompany(CustomUserDetails authUser, Long companyId, Long facilityId,
+                                        Long companyCustomerId, Boolean openOnly, Language language) throws IOException, ApiException {
+
+        // Get the deliveries list (PURCHASE_ORDER stock orders)
+        ApiPaginatedRequest request = new ApiPaginatedRequest();
+        request.setLimit(10000);
+
+        // Prepare the query request for deliveries
+        StockOrderQueryRequest queryRequest = new StockOrderQueryRequest(
+                companyId,
+                facilityId,
+                null,
+                null,
+                null,
+                companyCustomerId,
+                openOnly
+        );
+
+        List<ApiStockOrder> apiDeliveries = getStockOrderListForCompany(request, queryRequest, authUser, language).items;
+
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+        try (XSSFWorkbook workbook = new XSSFWorkbook()) {
+
+            // Create date cell style
+            CellStyle dateCellStyle = workbook.createCellStyle();
+            dateCellStyle.setDataFormat((short) 14);
+
+            // Create Excel sheet
+            XSSFSheet sheet = workbook.createSheet(TranslateTools.getTranslatedValue(
+                    messageSource, "export.orders.sheet.name", language
+            ));
+
+            // Prepare the header
+            Row headerRow = sheet.createRow(0);
+            headerRow.createCell(0, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.orders.column.deliveryDate.label", language
+            ));
+            headerRow.createCell(1, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.orders.column.product.label", language
+            ));
+            headerRow.createCell(2, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.orders.column.customer.label", language
+            ));
+            headerRow.createCell(3, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.orders.column.orderId.label", language
+            ));
+            headerRow.createCell(4, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.orders.column.orderTo.label", language
+            ));
+            headerRow.createCell(5, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.orders.column.quantity.label", language
+            ));
+            headerRow.createCell(6, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.orders.column.fullfilled.label", language
+            ));
+            headerRow.createCell(7, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.orders.column.unit.label", language
+            ));
+            headerRow.createCell(8, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.orders.column.kgs.label", language
+            ));
+            headerRow.createCell(9, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.orders.column.timeLastChanged.label", language
+            ));
+
+            int rowNum = 1;
+            for (ApiStockOrder apiDelivery : apiDeliveries) {
+
+                Row row = sheet.createRow(rowNum++);
+
+                // Create delivery date column
+                row.createCell(0, CellType.NUMERIC).setCellValue(apiDelivery.getProductionDate());
+                row.getCell(0).setCellStyle(dateCellStyle);
+                // sheet.autoSizeColumn(0);
+
+
+                // Create SKU product name column
+                String skuname = apiDelivery.getFinalProduct().getName()+" ("+apiDelivery.getFinalProduct().getProduct().getName() + ")";
+                row.createCell(1, CellType.STRING).setCellValue(skuname);
+                // sheet.autoSizeColumn(1);
+
+                // Create Customer column
+                row.createCell(2, CellType.STRING).setCellValue(apiDelivery.getConsumerCompanyCustomer().getName());
+                // sheet.autoSizeColumn(2);
+
+                // Create Order Id column
+                row.createCell(3, CellType.STRING).setCellValue(apiDelivery.getProductOrder().getOrderId());
+                // sheet.autoSizeColumn(3);
+
+                // Create Oder to column
+                row.createCell(4, CellType.STRING).setCellValue(apiDelivery.getQuoteFacility().getCompany().getName()+" ("+
+                        apiDelivery.getQuoteFacility().getName() +")" );
+                // sheet.autoSizeColumn(4);
+
+                // Create quantity column
+                row.createCell(5, CellType.NUMERIC).setCellValue(apiDelivery.getTotalQuantity().doubleValue());
+                // sheet.autoSizeColumn(5);
+
+                // Create quantity column
+                row.createCell(6, CellType.NUMERIC).setCellValue(apiDelivery.getFulfilledQuantity().doubleValue());
+                // sheet.autoSizeColumn(6);
+
+                // Create unit column
+                row.createCell(7, CellType.STRING).setCellValue(apiDelivery.getMeasureUnitType().getLabel());
+                // sheet.autoSizeColumn(7);
+
+                // Create total kigs column
+                row.createCell(8, CellType.NUMERIC);
+                Double totalKilos =apiDelivery.getTotalQuantity().doubleValue() * apiDelivery.getMeasureUnitType().getWeight().doubleValue();
+                row.getCell(8).setCellValue(totalKilos);
+
+                // sheet.autoSizeColumn(9);
+
+                row.createCell(9, CellType.STRING).setCellValue(Date.from(apiDelivery.getUpdateTimestamp()));
+                row.getCell(9).setCellStyle(dateCellStyle);
+
+
+            }
+
+            workbook.write(byteArrayOutputStream);
+        }
+
+        return byteArrayOutputStream.toByteArray();
+    }
+
+    /**
+     * Returns the history (the chain of stock orders from top to bottom) for the provided Stock order ID.
+     *
+     * @param id The Stock order ID.
+     * @param language User selected language.
+     * @param withDetails Should the response contain Stock and Processing order details.
+     */
+    public ApiStockOrderHistory getStockOrderAggregatedHistoryList_old(Long id,
+                                                                   Language language,
+                                                                   CustomUserDetails user,
+                                                                   boolean withDetails) throws ApiException {
+
+        StockOrder stockOrder = fetchEntity(id, StockOrder.class);
+
+        // If requested details, we have to check if request user is enrolled in one of the connected companies
+        if (withDetails) {
+
+            if (user == null) {
+                throw new ApiException(ApiStatus.UNAUTHORIZED, "Request user is required!");
+            }
+
+            PermissionsUtil.checkUserIfConnectedWithProducts(companyQueries.fetchCompanyProducts(stockOrder.getCompany().getId()), user);
+        }
+
+        ApiStockOrderHistory stockOrderHistory = new ApiStockOrderHistory();
+
+        // Recursively add history, starting from depth 0
+        List<ApiStockOrderHistoryTimelineItem> historyTimeline;
+        if (user != null) {
+            historyTimeline = addNextAggregationLevels(0, stockOrder, language, user.getUserId());
+        } else {
+            historyTimeline = addNextAggregationLevels(0, stockOrder, language, null);
+        }
+        historyTimeline.sort(Comparator.comparingInt(ApiStockOrderHistoryTimelineItem::getDepth));
+
+        // Prepare aggregated Purchase orders (group all into single history timeline item)
+        ApiStockOrderHistoryTimelineItem aggregatedPurchaseOrders = new ApiStockOrderHistoryTimelineItem();
+
+        stockOrderHistory.setTimelineItems(historyTimeline.stream().filter(timelineItem -> {
+            if (timelineItem.getStockOrder() != null) {
+                aggregatedPurchaseOrders.getPurchaseOrders().add(timelineItem.getStockOrder());
+                return false;
+            }
+            return true;
+        }).collect(Collectors.toList()));
+        stockOrderHistory.getTimelineItems().add(aggregatedPurchaseOrders);
+
+        // If details are not request end the processing (we don't need the Stock and Processing order data including input and output transactions)
+        if (!withDetails) {
+            return stockOrderHistory;
+        }
+
+        // Set the Stock order and Processing order for which the history is calculated (including the input transaction for the Processing order)
+        stockOrderHistory.setStockOrder(StockOrderMapper.toApiStockOrderHistory(stockOrder, language));
+        stockOrderHistory.setProcessingOrder(ProcessingOrderMapper.toApiProcessingOrderHistory(stockOrder.getProcessingOrder(), language));
+
+        if (stockOrder.getProcessingOrder() != null) {
+
+            // Set the input transactions for the Processing order
+            stockOrderHistory.getProcessingOrder().setInputTransactions(
+                    stockOrder.getProcessingOrder().getInputTransactions().stream()
+                            .map(TransactionMapper::toApiTransactionHistory).collect(Collectors.toList()));
+
+            // Set the sibling Stock orders
+            stockOrderHistory.getProcessingOrder().setTargetStockOrders(
+                    stockOrder.getProcessingOrder().getTargetStockOrders().stream().map(tSO -> {
+                        ApiStockOrder apiStockOrder = new ApiStockOrder();
+                        apiStockOrder.setId(tSO.getId());
+                        apiStockOrder.setTotalQuantity(tSO.getTotalQuantity());
+                        apiStockOrder.setMeasureUnitType(
+                                MeasureUnitTypeMapper.toApiMeasureUnitTypeBase(tSO.getMeasurementUnitType()));
+                        return apiStockOrder;
+                    }).collect(Collectors.toList()));
+        }
+
+        // Set the output transaction for the chosen Stock order (the transactions where this Stock order was used as an input)
+        List<Transaction> outputTransactions = findOutputTransactions(stockOrder);
+        stockOrderHistory.setOutputTransactions(outputTransactions.stream().map(transaction -> {
+            ApiTransaction apiTransaction = TransactionMapper.toApiTransactionHistory(transaction);
+            transaction.getTargetProcessingOrder().getTargetStockOrders().stream().findAny().ifPresent(tSO -> {
+                ApiStockOrder apiTSO = new ApiStockOrder();
+                apiTSO.setId(tSO.getId());
+                apiTransaction.setTargetStockOrder(apiTSO);
+            });
+            return apiTransaction;
+        }).collect(Collectors.toList()));
+
+        return stockOrderHistory;
+    }
+
+    public byte[] exportStockOrderAggregatedHistory(CustomUserDetails authUser, Long stockOrderId,  Language language) throws IOException, ApiException {
+
+        // Get the deliveries list (PURCHASE_ORDER stock orders)
+        ApiPaginatedRequest request = new ApiPaginatedRequest();
+        request.setLimit(10000);
+
+        ApiStockOrderHistory stockOrderHistory = getStockOrderAggregatedHistoryList(stockOrderId, language, authUser, true );
+
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+        try (XSSFWorkbook workbook = new XSSFWorkbook()) {
+
+            // Create date cell style
+            CellStyle dateCellStyle = workbook.createCellStyle();
+            dateCellStyle.setDataFormat((short) 14);
+
+            // Create Excel sheet
+            XSSFSheet sheet = workbook.createSheet(TranslateTools.getTranslatedValue(
+                    messageSource, "export.stockorders.sheet.name", language
+            ));
+
+            // Prepare the header
+            Row headerRow = sheet.createRow(0);
+            headerRow.createCell(0, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.stockorders.column.deliveryDate.label", language
+            ));
+            headerRow.createCell(1, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.stockorders.column.facility.label", language
+            ));
+            headerRow.createCell(2, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.stockorders.column.lot.label", language
+            ));
+            headerRow.createCell(3, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.stockorders.column.transaction_type.label", language
+            ));
+            headerRow.createCell(4, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.stockorders.column.farmer_name.label", language
+            ));
+            headerRow.createCell(5, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.stockorders.column.farmer_surname.label", language
+            ));
+            headerRow.createCell(6, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.stockorders.column.receipt.label", language
+            ));
+            headerRow.createCell(7, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.stockorders.column.product.label", language
+            ));
+            headerRow.createCell(8, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.stockorders.column.unit.label", language
+            ));
+            headerRow.createCell(9, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.stockorders.column.quantity.label", language
+            ));
+            headerRow.createCell(10, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.stockorders.column.amount.label", language
+            ));
+            headerRow.createCell(11, CellType.STRING).setCellValue(TranslateTools.getTranslatedValue(
+                    messageSource, "export.stockorders.column.receipt_bill", language
+            ));
+
+
+            int rowNum = 1;
+            List<ApiStockOrderHistoryTimelineItem> historyTimeline = stockOrderHistory.getTimelineItems() ;
+            for (ApiStockOrderHistoryTimelineItem stockLine : historyTimeline) {
+
+                Row row = sheet.createRow(rowNum++);
+                // determine if it is a processing, if not it's a purchase order(delivery)
+                if( stockLine.getProcessingOrder() != null){
+                    row.createCell(0, CellType.NUMERIC).setCellValue(stockLine.getProcessingOrder().getProcessingDate());
+                    row.getCell(0).setCellStyle(dateCellStyle);
+
+                    row.createCell(1, CellType.STRING).setCellValue(stockLine.getProcessingOrder().getTargetStockOrders().get(0).getFacility().getName());
+                    row.createCell(2, CellType.STRING).setCellValue(stockLine.getProcessingOrder().getTargetStockOrders().get(0).getInternalLotNumber());
+                    row.createCell(3, CellType.STRING).setCellValue("ORDER");
+                    row.createCell(4, CellType.STRING).setCellValue("");
+                    row.createCell(5, CellType.STRING).setCellValue("");
+                    row.createCell(6, CellType.STRING).setCellValue("");
+                    // test if the processins has finalProduct or Semi product
+                    String theName ="";
+                    if(stockLine.getProcessingOrder().getProcessingAction().getOutputFinalProduct() != null){
+                         theName= stockLine.getProcessingOrder().getProcessingAction().getOutputFinalProduct().getName() +" ("+
+                                stockLine.getProcessingOrder().getProcessingAction().getOutputFinalProduct().getProduct().getName()+")";
+                    }else{
+                         theName= stockLine.getProcessingOrder().getProcessingAction().getOutputSemiProducts().get(0).getName() ;
+                    }
+
+                    row.createCell(7, CellType.STRING).setCellValue(theName);
+                    row.createCell(8, CellType.STRING).setCellValue(stockLine.getProcessingOrder().getTargetStockOrders().get(0).getMeasureUnitType().getLabel());
+                    row.createCell(9, CellType.NUMERIC).setCellValue(stockLine.getProcessingOrder().getTargetStockOrders().get(0).getTotalQuantity().doubleValue());
+                    row.createCell(10, CellType.STRING).setCellValue("");
+
+                    // get the evidence if so
+                    final ApiDocument[] leDoc = {new ApiDocument()};
+
+                    List<ApiStockOrderEvidenceTypeValue> stockEvidences = stockLine.getOtherEvidenceDocuments();
+                    if(!stockEvidences.isEmpty()) {
+                        leDoc[0] = stockEvidences.get(0).getDocument();
+                    }
+
+
+                    if(leDoc[0] != null && leDoc[0].getSize() != null && leDoc[0].getSize() > 0){
+                        Cell cell = row.createCell(11, CellType.STRING);
+                        cell.setCellValue(leDoc[0].getName());
+//                        row.createCell(10, CellType.STRING).setCellValue(leDoc[0].getName());
+                        // Création du lien hypertexte
+
+                        String url = baseUrl + "/api/common/document/" + leDoc[0].getStorageKey();
+                        CreationHelper createHelper = row.getSheet().getWorkbook().getCreationHelper();
+                        org.apache.poi.ss.usermodel.Hyperlink link = createHelper.createHyperlink(HyperlinkType.URL);
+                        link.setAddress(url);
+                        cell.setHyperlink(link);
+                    }
+
+                }else{
+                    int currentIndex = rowNum;
+                    // purchase orders can have many lines processing them
+                    for( ApiStockOrder StockOrderLine: stockLine.getPurchaseOrders()){
+                        if(currentIndex != rowNum){
+                            row = sheet.createRow(rowNum);
+                        }
+                        row.createCell(0, CellType.NUMERIC).setCellValue(StockOrderLine.getProductionDate());
+                        row.getCell(0).setCellStyle(dateCellStyle);
+                        row.createCell(1, CellType.STRING).setCellValue(StockOrderLine.getFacility().getName());
+                        row.createCell(2, CellType.STRING).setCellValue(StockOrderLine.getIdentifier());
+                        row.createCell(3, CellType.STRING).setCellValue("DELIVERY");
+                        row.createCell(4, CellType.STRING).setCellValue(StockOrderLine.getProducerUserCustomer().getName());
+                        row.createCell(5, CellType.STRING).setCellValue(StockOrderLine.getProducerUserCustomer().getSurname());
+                        if(!StockOrderLine.getPayments().isEmpty()){
+                            row.createCell(6, CellType.STRING).setCellValue(StockOrderLine.getPayments().get(0).getReceiptNumber());
+                        }else{
+                            row.createCell(6, CellType.STRING).setCellValue("");
+                        }
+
+                        row.createCell(7, CellType.STRING).setCellValue(StockOrderLine.getSemiProduct().getName());
+                        row.createCell(8, CellType.STRING).setCellValue(StockOrderLine.getMeasureUnitType().getLabel());
+                        row.createCell(9, CellType.NUMERIC).setCellValue(StockOrderLine.getTotalQuantity().doubleValue());
+                        row.createCell(10, CellType.NUMERIC).setCellValue(StockOrderLine.getCost().doubleValue());
+
+                        // get the evidence if so
+                        final ApiDocument[] leDoc = {new ApiDocument()};
+
+                        List<ApiStockOrderEvidenceTypeValue> stockEvidences = StockOrderLine.getOtherEvidenceDocuments();
+                        if(!stockEvidences.isEmpty()) {
+                            leDoc[0] = stockEvidences.get(0).getDocument();
+                        }
+
+
+
+                        if(leDoc[0] != null && leDoc[0].getSize() != null && leDoc[0].getSize() > 0){
+                            Cell cell = row.createCell(11, CellType.STRING);
+                            cell.setCellValue(leDoc[0].getName());
+//                        row.createCell(10, CellType.STRING).setCellValue(leDoc[0].getName());
+                            // Création du lien hypertexte
+
+                            String url = baseUrl + "/api/common/document/" + leDoc[0].getStorageKey();
+                            CreationHelper createHelper = row.getSheet().getWorkbook().getCreationHelper();
+                            Hyperlink link = createHelper.createHyperlink(HyperlinkType.URL);
+                            link.setAddress(url);
+                            cell.setHyperlink(link);
+                        }
+
+                        rowNum++;
+                    }
+
+                }
+
+            }
+
+            workbook.write(byteArrayOutputStream);
+        }
+
+        return byteArrayOutputStream.toByteArray();
+    }
+
+
 }

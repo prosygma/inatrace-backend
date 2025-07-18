@@ -290,13 +290,127 @@ public class CompanyService extends BaseService {
 		return companyApiTools.toApiUserCustomer(userCustomer, user.getUserId(), language);
 	}
 
-	public boolean existsUserCustomer(ApiUserCustomer apiUserCustomer) {
-		List<UserCustomer> userCustomerList = em.createNamedQuery("UserCustomer.getUserCustomerByNameSurnameAndVillage", UserCustomer.class)
+	public boolean existsUserCustomer_old(ApiUserCustomer apiUserCustomer) {
+		List<UserCustomer> userCustomerList = em.createNamedQuery("UserCustomer.getUserCustomerByNameSurnameAndCity", UserCustomer.class)
 				.setParameter("name", apiUserCustomer.getName())
 				.setParameter("surname", apiUserCustomer.getSurname())
-				.setParameter("village", apiUserCustomer.getLocation().getAddress().getVillage())
+				.setParameter("city", apiUserCustomer.getLocation().getAddress().getCity()) //  getVillage())
 				.getResultList();
 		return !userCustomerList.isEmpty();
+	}
+
+	public boolean existsUserCustomer(ApiUserCustomer apiUserCustomer) {
+		// Vérifier d'abord par internalId si présent
+		if (apiUserCustomer.getFarmerCompanyInternalId() != null) {
+			List<UserCustomer> byInternalId = em.createQuery(
+							"SELECT uc FROM UserCustomer uc WHERE uc.farmerCompanyInternalId = :internalId",
+							UserCustomer.class)
+					.setParameter("internalId", apiUserCustomer.getFarmerCompanyInternalId())
+					.getResultList();
+
+			if (!byInternalId.isEmpty()) return true;
+		}
+
+		// Fallback sur la vérification par nom/prénom/ville
+		return !em.createNamedQuery("UserCustomer.getUserCustomerByNameSurnameAndCity",
+						UserCustomer.class)
+				.setParameter("name", apiUserCustomer.getName())
+				.setParameter("surname", apiUserCustomer.getSurname())
+				.setParameter("city", apiUserCustomer.getLocation().getAddress().getCity())
+				.getResultList()
+				.isEmpty();
+	}
+
+	public void addPlotsToExistingFarmer_old(ApiUserCustomer newFarmerData) {
+		UserCustomer existingFarmer = em.createQuery(
+						"SELECT uc FROM UserCustomer uc WHERE uc.farmerCompanyInternalId = :internalId",
+						UserCustomer.class)
+				.setParameter("internalId", newFarmerData.getFarmerCompanyInternalId())
+				.getSingleResult();
+//
+//		// Convertir les nouvelles parcelles en entités
+//		List<Plot> newPlots = newFarmerData.getPlots().stream()
+//				.map(apiPlot -> {
+//					Plot plot = new Plot();
+//					plot.setPlotName(apiPlot.getPlotName());
+//					plot.setSize(apiPlot.getSize());
+//					plot.setUnit(apiPlot.getUnit());
+//
+//					// Convertir les coordonnées
+//					List<PlotCoordinate> coordinates = apiPlot.getCoordinates().stream()
+//							.map(apiCoord -> {
+//								PlotCoordinate coord = new PlotCoordinate();
+//								coord.setLatitude(apiCoord.getLatitude());
+//								coord.setLongitude(apiCoord.getLongitude());
+//								coord.setPlot(plot); // Lier à la parcelle
+//								return coord;
+//							})
+//							.collect(Collectors.toList());
+//
+//					plot.getCoordinates().add(coordinates);
+//					plot.setCoordinates(coordinates);
+//					plot.setUserCustomer(existingFarmer); // Lier à l'agriculteur
+//					return plot;
+//				})
+//				.collect(Collectors.toList());
+		em.merge(existingFarmer);
+	}
+
+	public void addPlotsToExistingFarmer(ApiUserCustomer newFarmerData) {
+		UserCustomer existingFarmer = em.createQuery(
+						"SELECT uc FROM UserCustomer uc WHERE uc.farmerCompanyInternalId = :internalId",
+						UserCustomer.class)
+				.setParameter("internalId", newFarmerData.getFarmerCompanyInternalId())
+				.getSingleResult();
+
+		for (ApiPlot apiPlot : newFarmerData.getPlots()) {
+			Plot plot = new Plot();
+			plot.setPlotName(apiPlot.getPlotName());
+			plot.setUnit(apiPlot.getUnit());
+			plot.setSize(apiPlot.getSize());
+			plot.setFarmer(existingFarmer);
+			plot.setLastUpdated(new Date());
+
+			for (ApiPlotCoordinate apiPlotCoordinate : apiPlot.getCoordinates()) {
+				PlotCoordinate plotCoordinate = new PlotCoordinate();
+				plotCoordinate.setLatitude(apiPlotCoordinate.getLatitude());
+				plotCoordinate.setLongitude(apiPlotCoordinate.getLongitude());
+				plotCoordinate.setPlot(plot);
+				plot.getCoordinates().add(plotCoordinate);
+			}
+
+			// Generate Plot GeoID
+			plot.setGeoId(generatePlotGeoID(plot.getCoordinates()));
+
+			existingFarmer.getPlots().add(plot);
+		}
+
+//		// Convertir les nouvelles parcelles en entités
+//		List<Plot> newPlots = newFarmerData.getPlots().stream()
+//				.map(apiPlot -> {
+//					Plot plot = new Plot();
+//					plot.setPlotName(apiPlot.getPlotName());
+//					plot.setSize(apiPlot.getSize());
+//					plot.setUnit(apiPlot.getUnit());
+//
+//					// Convertir les coordonnées
+//					List<PlotCoordinate> coordinates = apiPlot.getCoordinates().stream()
+//							.map(apiCoord -> {
+//								PlotCoordinate coord = new PlotCoordinate();
+//								coord.setLatitude(apiCoord.getLatitude());
+//								coord.setLongitude(apiCoord.getLongitude());
+//								coord.setPlot(plot); // Lier à la parcelle
+//								return coord;
+//							})
+//							.collect(Collectors.toList());
+//
+//					plot.getCoordinates().add(coordinates);
+//					plot.setCoordinates(coordinates);
+//					plot.setUserCustomer(existingFarmer); // Lier à l'agriculteur
+//					return plot;
+//				})
+//				.collect(Collectors.toList());
+		em.merge(existingFarmer);
 	}
 
 	public ApiPaginatedList<ApiUserCustomer> getUserCustomersForCompanyAndType(Long companyId,
@@ -753,52 +867,106 @@ public class CompanyService extends BaseService {
 	}
 
 	private byte[] prepareFarmersGeoDataFile(List<ApiUserCustomer> apiUserCustomers) throws ApiException {
+		List<Feature> features = new ArrayList<>(apiUserCustomers.size() * 2); // Estimation de capacité initiale
 
-		// Create the list for holding features that will be included in the feature collection
-		List<Feature> features = new ArrayList<>();
+		for (ApiUserCustomer customer : apiUserCustomers) {
+			long farmerId = customer.getId();
 
-		// For every farmer create Point or Polygon features
-		for (ApiUserCustomer apiUserCustomer : apiUserCustomers) {
-			for (ApiPlot apiPlot : apiUserCustomer.getPlots()) {
-
-				Feature feature;
-
-				// If less than 3 coordinates we have single Point geometry
-				if (apiPlot.getCoordinates().size() < 3) {
-
-					Point point = Point.fromLngLat(
-							apiPlot.getCoordinates().get(0).getLongitude(),
-							apiPlot.getCoordinates().get(0).getLatitude()
-					);
-					feature = Feature.fromGeometry(point);
-				} else {
-
-					List<Point> polygonCoordinates = apiPlot.getCoordinates()
-							.stream()
-							.map(apiPlotCoordinate -> Point.fromLngLat(
-									apiPlotCoordinate.getLongitude(), apiPlotCoordinate.getLatitude()
-							))
-							.collect(Collectors.toList());
-
-					// Polygon feature requires that first and last coordinate pair is the same
-					ApiPlotCoordinate firstCoordinatePair = apiPlot.getCoordinates().get(0);
-					polygonCoordinates.add(
-							Point.fromLngLat(firstCoordinatePair.getLongitude(), firstCoordinatePair.getLatitude()));
-
-					Polygon polygon = Polygon.fromLngLats(List.of(polygonCoordinates));
-					feature = Feature.fromGeometry(polygon);
+			for (ApiPlot plot : customer.getPlots()) {
+				List<ApiPlotCoordinate> coordinates = plot.getCoordinates();
+				if (coordinates.isEmpty()) {
+					continue;
 				}
 
-				feature.addNumberProperty("farmerID", apiUserCustomer.getId());
-				feature.addNumberProperty("plotID", apiPlot.getId());
-				feature.addStringProperty("geoID", Optional.ofNullable(apiPlot.getGeoId()).orElse(""));
-
-				features.add(feature);
+				Feature feature = createFeatureFromPlot(coordinates);
+				if (feature != null) {
+					enrichFeatureWithProperties(feature, farmerId, plot);
+					features.add(feature);
+				}
 			}
 		}
 
 		return FeatureCollection.fromFeatures(features).toJson().getBytes();
 	}
+
+	private Feature createFeatureFromPlot(List<ApiPlotCoordinate> coordinates) {
+		if (coordinates.size() < 3) {
+			// Cas Point
+			ApiPlotCoordinate coord = coordinates.get(0);
+			return Feature.fromGeometry(Point.fromLngLat(coord.getLongitude(), coord.getLatitude()));
+		} else {
+			// Cas Polygon
+			List<Point> polygonPoints = new ArrayList<>(coordinates.size() + 1);
+
+			// Convertir toutes les coordonnées
+			for (ApiPlotCoordinate coord : coordinates) {
+				polygonPoints.add(Point.fromLngLat(coord.getLongitude(), coord.getLatitude()));
+			}
+
+			// Fermer le polygone en ajoutant le premier point à la fin
+			polygonPoints.add(polygonPoints.get(0));
+
+			return Feature.fromGeometry(Polygon.fromLngLats(List.of(polygonPoints)));
+		}
+	}
+
+	private void enrichFeatureWithProperties(Feature feature, long farmerId, ApiPlot plot) {
+		feature.addNumberProperty("farmerID", farmerId);
+		feature.addNumberProperty("plotID", plot.getId());
+		feature.addStringProperty("geoID", Optional.ofNullable(plot.getGeoId()).orElse(""));
+	}
+
+//	private byte[] prepareFarmersGeoDataFile_old(List<ApiUserCustomer> apiUserCustomers) throws ApiException {
+//
+//		// Create the list for holding features that will be included in the feature collection
+//		List<Feature> features = new ArrayList<>();
+//
+//		// For every farmer create Point or Polygon features
+//		for (ApiUserCustomer apiUserCustomer : apiUserCustomers) {
+//			for (ApiPlot apiPlot : apiUserCustomer.getPlots()) {
+//
+//				Feature feature;
+//
+//				// If less than 3 coordinates we have single Point geometry
+//				if ( apiPlot.getCoordinates().size() < 3) {
+//
+//						Point point = Point.fromLngLat(
+//								apiPlot.getCoordinates().get(0).getLongitude(),
+//								apiPlot.getCoordinates().get(0).getLatitude()
+//						);
+//						feature = Feature.fromGeometry(point);
+//
+//
+//				} else {
+//
+//					List<Point> polygonCoordinates = apiPlot.getCoordinates()
+//							.stream()
+//							.map(apiPlotCoordinate -> Point.fromLngLat(
+//									apiPlotCoordinate.getLongitude(), apiPlotCoordinate.getLatitude()
+//							))
+//							.collect(Collectors.toList());
+//
+//					// Polygon feature requires that first and last coordinate pair is the same
+//					ApiPlotCoordinate firstCoordinatePair = apiPlot.getCoordinates().get(0);
+//					polygonCoordinates.add(
+//							Point.fromLngLat(firstCoordinatePair.getLongitude(), firstCoordinatePair.getLatitude()));
+//
+//					Polygon polygon = Polygon.fromLngLats(List.of(polygonCoordinates));
+//					feature = Feature.fromGeometry(polygon);
+//				}
+//
+//
+//					feature.addNumberProperty("farmerID", apiUserCustomer.getId());
+//					feature.addNumberProperty("plotID", apiPlot.getId());
+//					feature.addStringProperty("geoID", Optional.ofNullable(apiPlot.getGeoId()).orElse(""));
+//
+//					features.add(feature);
+//
+//			}
+//		}
+//
+//		return FeatureCollection.fromFeatures(features).toJson().getBytes();
+//	}
 
 	@Transactional
 	public ApiUserCustomer addUserCustomer(Long companyId, ApiUserCustomer apiUserCustomer, CustomUserDetails user, Language language) throws ApiException {

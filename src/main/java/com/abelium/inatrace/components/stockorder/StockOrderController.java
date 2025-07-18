@@ -294,4 +294,56 @@ public class StockOrderController {
                 .body(response);
     }
 
+    // begin Prosygma update
+    @GetMapping(value = "export/placed-orders/company/{companyId}", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
+    @Operation(summary ="Export placed orders  for the provided company ID")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(
+                    content = @Content(schema = @Schema(type = "string", format = "binary"))
+            )
+    })
+    public ResponseEntity<byte[]> exportOrdersByCompany(
+            @Valid @Parameter(description = "Company ID", required = true) @PathVariable("companyId") Long companyId,
+            @Valid @Parameter(description = "Facility ID") @RequestParam(value = "facilityId", required = false) Long facilityId,
+            @Valid @Parameter(description = "Company customer ID") @RequestParam(value = "companyCustomerId", required = false) Long companyCustomerId,
+            @Valid @Parameter(description = "Return only open stock orders") @RequestParam(value = "openOnly", required = false) Boolean openOnly,
+            @AuthenticationPrincipal CustomUserDetails authUser,
+            @RequestHeader(value = "language", defaultValue = "EN", required = false) Language language) throws ApiException {
+
+        byte[] response;
+        try {
+            response = stockOrderService.exportOrdersByCompany(authUser, companyId,facilityId, companyCustomerId, openOnly, language);
+        } catch (IOException e) {
+            throw new ApiException(ApiStatus.ERROR, "Error while exporting file!");
+        }
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(response);
+    }
+
+    @GetMapping(value = "{stockOrderId}/aggregated-history-export", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
+    @Operation(summary ="Export History of a single stock order ID")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(
+                    content = @Content(schema = @Schema(type = "string", format = "binary"))
+            )
+    })
+    public ResponseEntity<byte[]> exportStockOrderAggregatedHistory(
+            @Valid @Parameter(description = "StockOrder ID", required = true) @PathVariable("stockOrderId") Long stockOrderId,
+            @AuthenticationPrincipal CustomUserDetails authUser,
+            @RequestHeader(value = "language", defaultValue = "EN", required = false) Language language) throws ApiException {
+
+        byte[] response;
+        try {
+            response = stockOrderService.exportStockOrderAggregatedHistory(authUser, stockOrderId, language);
+        } catch (IOException e) {
+            throw new ApiException(ApiStatus.ERROR, "Error while exporting hsitory single stock order file!");
+        }
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(response);
+    }
+
 }
