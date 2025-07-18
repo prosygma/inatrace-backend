@@ -23,6 +23,11 @@ import com.abelium.inatrace.types.Gender;
 import com.abelium.inatrace.types.Language;
 import com.abelium.inatrace.types.UserCustomerType;
 import com.abelium.inatrace.types.UserRole;
+import com.mapbox.geojson.Feature;
+import com.mapbox.geojson.FeatureCollection;
+import com.mapbox.geojson.Point;
+import com.mapbox.geojson.Polygon;
+import com.mapbox.turf.TurfMeasurement;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.Row;
@@ -31,14 +36,14 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.CollectionUtils;
 import org.torpedoquery.jakarta.jpa.Torpedo;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Lazy
@@ -54,6 +59,7 @@ public class UserCustomerImportService extends BaseService {
     @Autowired
     private StorageService storageService;
 
+    @Transactional
     public ApiUserCustomerImportResponse importFarmersSpreadsheet(Long companyId, Long documentId, CustomUserDetails authUser, Language language) throws ApiException {
 
         // If importing as a Regional admin, check that it is enrolled in the company
@@ -75,13 +81,20 @@ public class UserCustomerImportService extends BaseService {
 
         XSSFSheet mainSheet = mainWorkbook.getSheetAt(0);
 
+
+
         // boolean means that the second product is also present in the Excel
         boolean hasSecondProductType = checkSecondProductType(mainSheet);
 
         int rowIndex = 5;
         int successful = 0;
+
+        Map<String, ApiUserCustomer> farmersMap = new HashMap<>(); // Clé: internalId
         List<ApiUserCustomer> duplicates = new ArrayList<>();
         List<ApiUserCustomer> toAdd = new ArrayList<>();
+
+        //Save the table of internal id of new farmers
+//        List<String> tabInternalId = new ArrayList<>();
 
         // company product types (first two)
         List<ApiProductType> companyProductTypes = readCompanyProductTypes(companyId, language);
@@ -107,81 +120,97 @@ public class UserCustomerImportService extends BaseService {
 
             // If there are no column validation errors, the row is valid
             if (rowValidation.getColumnValidationErrors().isEmpty()) {
+                String internalId = getStringOrNumeric(row.getCell(0));
 
-                ApiUserCustomer apiUserCustomer = new ApiUserCustomer();
-                apiUserCustomer.setCompanyId(companyId);
-                apiUserCustomer.setType(UserCustomerType.FARMER);
-                apiUserCustomer.setProductTypes(companyProductTypes);
-
-                // ID (company-internal)
-                apiUserCustomer.setFarmerCompanyInternalId(getStringOrNumeric(row.getCell(0)));
-
-                // Personal data (name, surname, email, phone, etc.)
-                apiUserCustomer.setSurname(getString(row.getCell(1)));
-                apiUserCustomer.setName(getString(row.getCell(2)));
-                apiUserCustomer.setGender(getGender(row.getCell(16)));
-                apiUserCustomer.setPhone(getStringOrNumeric(row.getCell(17)));
-                apiUserCustomer.setEmail(getStringOrNumeric(row.getCell(18)));
-                apiUserCustomer.setHasSmartphone(getBoolean(row.getCell(19)));
-
-                // Address data - location info
-                apiUserCustomer.setLocation(new ApiUserCustomerLocation());
-                apiUserCustomer.getLocation().setAddress(new ApiAddress());
-                apiUserCustomer.getLocation().getAddress().setVillage(getString(row.getCell(3)));
-                apiUserCustomer.getLocation().getAddress().setCell(getString(row.getCell(4)));
-                apiUserCustomer.getLocation().getAddress().setSector(getString(row.getCell(5)));
-                apiUserCustomer.getLocation().getAddress().setHondurasFarm(getString(row.getCell(6)));
-                apiUserCustomer.getLocation().getAddress().setHondurasVillage(getString(row.getCell(7)));
-                apiUserCustomer.getLocation().getAddress().setHondurasMunicipality(getString(row.getCell(8)));
-                apiUserCustomer.getLocation().getAddress().setHondurasDepartment(getString(row.getCell(9)));
-                apiUserCustomer.getLocation().getAddress().setAddress(getString(row.getCell(10)));
-                apiUserCustomer.getLocation().getAddress().setCity(getString(row.getCell(11)));
-                apiUserCustomer.getLocation().getAddress().setState(getString(row.getCell(12)));
-                apiUserCustomer.getLocation().getAddress().setZip(getStringOrNumeric(row.getCell(13)));
-                apiUserCustomer.getLocation().getAddress().setOtherAddress(getString(row.getCell(14)));
-                apiUserCustomer.getLocation().getAddress().setCountry(CommonApiTools.toApiCountry(getCountryByCode(getString(row.getCell(15)))));
-                apiUserCustomer.getLocation().getAddress().getCountry().setCode(getString(row.getCell(15)));
-
-                // Farm info
-                apiUserCustomer.setFarm(new ApiFarmInformation());
-                apiUserCustomer.getFarm().setFarmPlantInformationList(new ArrayList<>());
-                apiUserCustomer.getFarm().setAreaUnit(getString(row.getCell(20)));
-                apiUserCustomer.getFarm().setTotalCultivatedArea(getNumericBigDecimal(row.getCell(21)));
-
-                ApiFarmPlantInformation apiPlant1Information = new ApiFarmPlantInformation();
-                apiPlant1Information.setProductType(companyProductTypes.get(0));
-                apiPlant1Information.setPlantCultivatedArea(getNumericBigDecimal(row.getCell(22)));
-                apiPlant1Information.setNumberOfPlants(getNumericInteger(row.getCell(23)));
-                apiUserCustomer.getFarm().getFarmPlantInformationList().add(apiPlant1Information);
-
-                if (hasSecondProductType && companyProductTypes.get(1) != null) {
-                    ApiFarmPlantInformation apiPlant2Information = new ApiFarmPlantInformation();
-                    apiPlant2Information.setProductType(companyProductTypes.get(1));
-                    apiPlant2Information.setPlantCultivatedArea(getNumericBigDecimal(row.getCell(24)));
-                    apiPlant2Information.setNumberOfPlants(getNumericInteger(row.getCell(25)));
-                    apiUserCustomer.getFarm().getFarmPlantInformationList().add(apiPlant2Information);
-                }
-
-                apiUserCustomer.getFarm().setOrganic(getBoolean(row.getCell(26)));
-                if (apiUserCustomer.getFarm().getOrganic() == null) {
-                    apiUserCustomer.getFarm().setOrganic(false);
-                }
-
-                apiUserCustomer.getFarm().setAreaOrganicCertified(getNumericBigDecimal(row.getCell(27)));
-                apiUserCustomer.getFarm().setStartTransitionToOrganic(getDate(row.getCell(28)));
-
-                // Bank info
-                apiUserCustomer.setBank(new ApiBankInformation());
-                apiUserCustomer.getBank().setAccountNumber(getStringOrNumeric(row.getCell(29)));
-                apiUserCustomer.getBank().setAccountHolderName(getStringOrNumeric(row.getCell(30)));
-                apiUserCustomer.getBank().setBankName(getStringOrNumeric(row.getCell(31)));
-                apiUserCustomer.getBank().setAdditionalInformation(getStringOrNumeric(row.getCell(32)));
-
-                if (companyService.existsUserCustomer(apiUserCustomer)) {
-                    duplicates.add(apiUserCustomer);
+                // Vérifier si l'agriculteur est déjà dans la map
+                if (farmersMap.containsKey(internalId)) {
+                    // Ajouter la nouvelle parcelle à l'agriculteur existant
+                    ApiUserCustomer existingFarmer = farmersMap.get(internalId);
+                    List<ApiPlot> newPlots = createUserGeoData(
+                            row.getCell(33).getStringCellValue().trim(),
+                            companyProductTypes.get(0).getId()
+                    );
+                    existingFarmer.getPlots().addAll(newPlots);
                 } else {
-                    toAdd.add(apiUserCustomer);
+
+                    ApiUserCustomer apiUserCustomer = new ApiUserCustomer();
+                    apiUserCustomer.setCompanyId(companyId);
+                    apiUserCustomer.setType(UserCustomerType.FARMER);
+                    apiUserCustomer.setProductTypes(companyProductTypes);
+
+                    // ID (company-internal)
+                    apiUserCustomer.setFarmerCompanyInternalId(getStringOrNumeric(row.getCell(0)));
+
+                    // Personal data (name, surname, email, phone, etc.)
+                    apiUserCustomer.setSurname(getString(row.getCell(1)));
+                    apiUserCustomer.setName(getString(row.getCell(2)));
+                    apiUserCustomer.setGender(getGender(row.getCell(16)));
+                    apiUserCustomer.setPhone(getStringOrNumeric(row.getCell(17)));
+                    apiUserCustomer.setEmail(getStringOrNumeric(row.getCell(18)));
+                    apiUserCustomer.setHasSmartphone(getBoolean(row.getCell(19)));
+
+                    // Address data - location info
+                    apiUserCustomer.setLocation(new ApiUserCustomerLocation());
+                    apiUserCustomer.getLocation().setAddress(new ApiAddress());
+                    apiUserCustomer.getLocation().getAddress().setVillage(getString(row.getCell(3)));
+                    apiUserCustomer.getLocation().getAddress().setCell(getString(row.getCell(4)));
+                    apiUserCustomer.getLocation().getAddress().setSector(getString(row.getCell(5)));
+                    apiUserCustomer.getLocation().getAddress().setHondurasFarm(getString(row.getCell(6)));
+                    apiUserCustomer.getLocation().getAddress().setHondurasVillage(getString(row.getCell(7)));
+                    apiUserCustomer.getLocation().getAddress().setHondurasMunicipality(getString(row.getCell(8)));
+                    apiUserCustomer.getLocation().getAddress().setHondurasDepartment(getString(row.getCell(9)));
+                    apiUserCustomer.getLocation().getAddress().setAddress(getString(row.getCell(10)));
+                    apiUserCustomer.getLocation().getAddress().setCity(getString(row.getCell(11)));
+                    apiUserCustomer.getLocation().getAddress().setState(getString(row.getCell(12)));
+                    apiUserCustomer.getLocation().getAddress().setZip(getStringOrNumeric(row.getCell(13)));
+                    apiUserCustomer.getLocation().getAddress().setOtherAddress(getString(row.getCell(14)));
+                    apiUserCustomer.getLocation().getAddress().setCountry(CommonApiTools.toApiCountry(getCountryByCode(getString(row.getCell(15)))));
+                    apiUserCustomer.getLocation().getAddress().getCountry().setCode(getString(row.getCell(15)));
+
+                    // Farm info
+                    apiUserCustomer.setFarm(new ApiFarmInformation());
+                    apiUserCustomer.getFarm().setFarmPlantInformationList(new ArrayList<>());
+                    apiUserCustomer.getFarm().setAreaUnit(getString(row.getCell(20)));
+                    apiUserCustomer.getFarm().setTotalCultivatedArea(getNumericBigDecimal(row.getCell(21)));
+
+                    ApiFarmPlantInformation apiPlant1Information = new ApiFarmPlantInformation();
+                    apiPlant1Information.setProductType(companyProductTypes.get(0));
+                    apiPlant1Information.setPlantCultivatedArea(getNumericBigDecimal(row.getCell(22)));
+                    apiPlant1Information.setNumberOfPlants(getNumericInteger(row.getCell(23)));
+                    apiUserCustomer.getFarm().getFarmPlantInformationList().add(apiPlant1Information);
+
+                    if (hasSecondProductType && companyProductTypes.get(1) != null) {
+                        ApiFarmPlantInformation apiPlant2Information = new ApiFarmPlantInformation();
+                        apiPlant2Information.setProductType(companyProductTypes.get(1));
+                        apiPlant2Information.setPlantCultivatedArea(getNumericBigDecimal(row.getCell(24)));
+                        apiPlant2Information.setNumberOfPlants(getNumericInteger(row.getCell(25)));
+                        apiUserCustomer.getFarm().getFarmPlantInformationList().add(apiPlant2Information);
+                    }
+
+                    apiUserCustomer.getFarm().setOrganic(getBoolean(row.getCell(26)));
+                    if (apiUserCustomer.getFarm().getOrganic() == null) {
+                        apiUserCustomer.getFarm().setOrganic(false);
+                    }
+
+                    apiUserCustomer.getFarm().setAreaOrganicCertified(getNumericBigDecimal(row.getCell(27)));
+                    apiUserCustomer.getFarm().setStartTransitionToOrganic(getDate(row.getCell(28)));
+
+                    // Bank info
+                    apiUserCustomer.setBank(new ApiBankInformation());
+                    apiUserCustomer.getBank().setAccountNumber(getStringOrNumeric(row.getCell(29)));
+                    apiUserCustomer.getBank().setAccountHolderName(getStringOrNumeric(row.getCell(30)));
+                    apiUserCustomer.getBank().setBankName(getStringOrNumeric(row.getCell(31)));
+                    apiUserCustomer.getBank().setAdditionalInformation(getStringOrNumeric(row.getCell(32)));
+
+                    // GeoData
+                    if (row.getCell(33) != null) {
+                        String theLineGeodata = row.getCell(33).getStringCellValue().trim();
+                        apiUserCustomer.setPlots(createUserGeoData(theLineGeodata, companyProductTypes.get(0).getId()));
+                    }
+
+                    farmersMap.put(internalId, apiUserCustomer);
                 }
+
             } else {
 
                 response.getValidationErrors().add(rowValidation);
@@ -190,14 +219,42 @@ public class UserCustomerImportService extends BaseService {
             rowIndex++;
         }
 
+        for (ApiUserCustomer farmer : farmersMap.values()) {
+            if (companyService.existsUserCustomer(farmer)) {
+                duplicates.add(farmer);
+            } else {
+                toAdd.add(farmer);
+            }
+        }
+
         // If no validation errors are present, proceed and add the user customers; If validation errors are present,
         // no user customer should be persisted
+//        if (response.getValidationErrors().isEmpty()) {
+//            for (ApiUserCustomer apiUserCustomer : toAdd) {
+//                companyService.addUserCustomer(companyId, apiUserCustomer, authUser, language);
+//                successful++;
+//            }
+//
+//            response.setDuplicates(duplicates);
+//        }
         if (response.getValidationErrors().isEmpty()) {
+            // Nouveaux agriculteurs
             for (ApiUserCustomer apiUserCustomer : toAdd) {
                 companyService.addUserCustomer(companyId, apiUserCustomer, authUser, language);
                 successful++;
             }
 
+            // Agriculteurs existants (ajout de parcelles)
+            for (ApiUserCustomer duplicate : duplicates) {
+                try {
+                    companyService.addPlotsToExistingFarmer(duplicate);
+//                    successful++;
+                } catch (Exception e) {
+                    logger.error("Failed to add plots to farmer: "
+                            + duplicate.getFarmerCompanyInternalId(), e);
+                    // Gérer l'erreur si nécessaire
+                }
+            }
             response.setDuplicates(duplicates);
         }
 
@@ -536,4 +593,90 @@ public class UserCustomerImportService extends BaseService {
         List<Country> countries = Torpedo.select(country).list(em);
         return countries.size() == 1 ? countries.get(0) : null;
     }
+
+
+    private List<ApiPlot> createUserGeoData(String cellGeodata, Long productTypeId) {
+        List<ApiPlot> plots = new ArrayList<>();
+
+        if (cellGeodata.isEmpty()) {
+            return plots;
+        }
+
+        try {
+            if (cellGeodata.startsWith("POLYGON")) {
+                // Extraction des coordonnées du POLYGON
+                String coordinatesStr = cellGeodata.replaceAll("POLYGON\\s*\\(\\((.*)\\)\\)", "$1");
+                String[] points = coordinatesStr.split(",\\s*");
+
+                List<Point> polygonPoints = new ArrayList<>();
+                for (String point : points) {
+                    String[] lngLat = point.trim().split("\\s+");
+                    logger.info("point: " + lngLat[0] + ", " + lngLat[1]);
+                    double lng = Double.parseDouble(lngLat[1]);
+                    double lat = Double.parseDouble(lngLat[0]);
+                    polygonPoints.add(Point.fromLngLat(lng, lat));
+                }
+
+                // Création du polygone et calcul de la superficie
+                Polygon polygon = Polygon.fromLngLats(Collections.singletonList(polygonPoints));
+                Feature feature = Feature.fromGeometry(polygon);
+
+                ApiPlot plot = new ApiPlot();
+                plot.setPlotName("Plot 1"); // À adapter si multiples parcelles
+
+                // Calcul superficie (comme dans le code original)
+                double areaM2 = TurfMeasurement.area(feature);
+                double areaHa = Math.floor((areaM2 / 1000) * 100) / 100.0;
+                plot.setSize(areaHa);
+                plot.setUnit("ha");
+
+                // Conversion des coordonnées
+                plot.setCoordinates(polygonPoints.stream().map(p -> {
+                    ApiPlotCoordinate coord = new ApiPlotCoordinate();
+                    coord.setLongitude(p.longitude());
+                    coord.setLatitude(p.latitude());
+                    return coord;
+                }).collect(Collectors.toList()));
+
+                // Définition de la culture (comme dans le code original)
+                ApiProductType productType = new ApiProductType();
+                productType.setId(productTypeId);
+                plot.setCrop(productType);
+
+                plots.add(plot);
+
+            } else if (cellGeodata.startsWith("POINT")) {
+                // Traitement d'un POINT (similaire au code original)
+                String coordinatesStr = cellGeodata.replaceAll("POINT\\s*\\((.*)\\)", "$1");
+                String[] lngLat = coordinatesStr.split("\\s+");
+
+                Point point = Point.fromLngLat(
+                        Double.parseDouble(lngLat[1]),
+                        Double.parseDouble(lngLat[0])
+                );
+
+                ApiPlot plot = new ApiPlot();
+                plot.setPlotName("Point 1");
+
+                ApiPlotCoordinate coord = new ApiPlotCoordinate();
+                coord.setLongitude(point.longitude());
+                coord.setLatitude(point.latitude());
+                plot.setCoordinates(Collections.singletonList(coord));
+
+                // Définition de la culture
+                ApiProductType productType = new ApiProductType();
+                productType.setId(productTypeId);
+                plot.setCrop(productType);
+
+                plots.add(plot);
+            }
+
+        } catch (Exception e) {
+            logger.error("Erreur de parsing des données géo: " + cellGeodata, e);
+        }
+
+        return plots;
+    }
+
+
 }

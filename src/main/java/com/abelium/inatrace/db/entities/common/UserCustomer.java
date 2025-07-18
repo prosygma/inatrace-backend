@@ -14,7 +14,8 @@ import java.util.Set;
 @Entity
 @NamedQueries({
 	@NamedQuery(name = "UserCustomer.getUserCustomerByCompanyIdAndType", query = "SELECT u FROM UserCustomer u WHERE u.company.id = :companyId AND u.type = :type"),
-	@NamedQuery(name = "UserCustomer.getUserCustomerByNameSurnameAndVillage", query = "SELECT u FROM UserCustomer u WHERE u.name = :name AND u.surname = :surname AND u.userCustomerLocation.address.village = :village")
+	@NamedQuery(name = "UserCustomer.getUserCustomerByNameSurnameAndVillage", query = "SELECT u FROM UserCustomer u WHERE u.name = :name AND u.surname = :surname AND u.userCustomerLocation.address.village = :village"),
+	@NamedQuery(name = "UserCustomer.getUserCustomerByNameSurnameAndCity", query = "SELECT u FROM UserCustomer u WHERE u.name = :name AND u.surname = :surname AND u.userCustomerLocation.address.city = :city")
 })
 public class UserCustomer extends BaseEntity {
 
