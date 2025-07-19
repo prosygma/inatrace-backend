@@ -159,3 +159,5 @@ src/main/resources/application.properties
 
 # Python bytecode (release scripts)
 __pycache__/
+logs/
+Upload/
