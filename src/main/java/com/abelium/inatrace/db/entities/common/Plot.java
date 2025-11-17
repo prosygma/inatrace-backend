@@ -38,7 +38,14 @@ public class Plot extends BaseEntity {
 	@Column
 	private Date lastUpdated;
 
-	@OneToMany(mappedBy = "plot", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @Column
+    private Double centerLatitude;
+
+    @Column
+    private Double centerLongitude;
+
+
+    @OneToMany(mappedBy = "plot", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
 	private Set<PlotCoordinate> coordinates;
 
 	@ManyToOne
@@ -126,5 +133,21 @@ public class Plot extends BaseEntity {
 	public void setFarmer(UserCustomer farmer) {
 		this.farmer = farmer;
 	}
+
+    public Double getCenterLatitude() {
+        return centerLatitude;
+    }
+
+    public void setCenterLatitude(Double centerLatitude) {
+        this.centerLatitude = centerLatitude;
+    }
+
+    public Double getCenterLongitude() {
+        return centerLongitude;
+    }
+
+    public void setCenterLongitude(Double centerLongitude) {
+        this.centerLongitude = centerLongitude;
+    }
 
 }

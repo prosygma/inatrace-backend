@@ -26,6 +26,8 @@ public class PlotMapper {
 		apiPlot.setUnit(plot.getUnit());
 		apiPlot.setSize(plot.getSize());
 		apiPlot.setGeoId(plot.getGeoId());
+        apiPlot.setCenterLatitude(plot.getCenterLatitude());
+        apiPlot.setCenterLongitude(plot.getCenterLongitude());
 		apiPlot.setOrganicStartOfTransition(plot.getOrganicStartOfTransition());
 		apiPlot.setCoordinates(
 				plot.getCoordinates().stream().map(PlotMapper::toApiPlotCoordinate).collect(Collectors.toList()));
