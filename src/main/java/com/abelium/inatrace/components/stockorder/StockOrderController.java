@@ -266,7 +266,6 @@ public class StockOrderController {
 
         ApiStockOrderHistory apiStockOrderHistory =
                 stockOrderService.getStockOrderAggregatedHistoryList(id, language, authUser, true);
-
         return stockOrderService.createGeoJsonFromDeliveries(apiStockOrderHistory.getTimelineItems());
     }
 
