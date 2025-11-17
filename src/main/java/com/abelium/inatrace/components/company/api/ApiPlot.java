@@ -41,6 +41,12 @@ public class ApiPlot extends ApiBaseEntity {
 	@Schema(description = "Date of last update")
 	private Long farmerId;
 
+    @Schema(description = "center Latitude")
+    private Double centerLatitude;
+
+    @Schema(description = "center Longitude")
+    private Double centerLongitude;
+
 	public String getPlotName() {
 		return plotName;
 	}
@@ -120,5 +126,21 @@ public class ApiPlot extends ApiBaseEntity {
 	public void setFarmerId(Long farmerId) {
 		this.farmerId = farmerId;
 	}
+
+    public Double getCenterLatitude() {
+        return centerLatitude;
+    }
+
+    public void setCenterLatitude(Double centerLatitude) {
+        this.centerLatitude = centerLatitude;
+    }
+
+    public Double getCenterLongitude() {
+        return centerLongitude;
+    }
+
+    public void setCenterLongitude(Double centerLongitude) {
+        this.centerLongitude = centerLongitude;
+    }
 
 }

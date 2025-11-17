@@ -1,0 +1,1 @@
+--- ALTER TABLE Plot ADD COLUMN centerLatitude DOUBLE,ADD COLUMN centerLongitude DOUBLE;

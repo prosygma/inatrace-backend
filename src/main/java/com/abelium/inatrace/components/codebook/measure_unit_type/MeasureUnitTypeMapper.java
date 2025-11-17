@@ -39,6 +39,29 @@ public final class MeasureUnitTypeMapper {
 	 * @param entity DB entity.
 	 * @return API model entity.
 	 */
+//	public static ApiMeasureUnitType toApiMeasureUnitType(MeasureUnitType entity) {
+//
+//		if (entity == null) {
+//			return null;
+//		}
+//
+//		ApiMeasureUnitType apiMeasureUnitType = MeasureUnitTypeMapper.toApiMeasureUnitTypeBase(entity);
+//
+//		apiMeasureUnitType.setWeight(entity.getWeight());
+//
+//		if (entity.getUnderlyingMeasurementUnitType() != null) {
+//			apiMeasureUnitType.setUnderlyingMeasurementUnitType(
+//					MeasureUnitTypeMapper.toApiMeasureUnitType(entity.getUnderlyingMeasurementUnitType()));
+//		}
+//
+//		return apiMeasureUnitType;
+//	}
+	/**
+	 * Mapping of the base attributes and all the associations.
+	 *
+	 * @param entity DB entity.
+	 * @return API model entity.
+	 */
 	public static ApiMeasureUnitType toApiMeasureUnitType(MeasureUnitType entity) {
 		return toApiMeasureUnitType(entity, new HashSet<>());
 	}
