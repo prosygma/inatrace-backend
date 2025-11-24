@@ -5,6 +5,8 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.ManyToOne;
 
+import java.util.Objects;
+
 /**
  * Singe coordinate of a plot.
  *
@@ -13,11 +15,14 @@ import jakarta.persistence.ManyToOne;
 @Entity
 public class PlotCoordinate extends BaseEntity {
 
-	@Column
-	private Double latitude;
+    @Column
+    private Double latitude;
 
-	@Column
-	private Double longitude;
+    @Column
+    private Double longitude;
+
+    @Column
+    private Integer coordinateOrder; // Nouveau champ pour l'ordre
 
 	@ManyToOne
 	private Plot plot;
@@ -45,5 +50,27 @@ public class PlotCoordinate extends BaseEntity {
 	public void setPlot(Plot plot) {
 		this.plot = plot;
 	}
+
+    public Integer getCoordinateOrder() {
+        return coordinateOrder;
+    }
+
+    public void setCoordinateOrder(Integer coordinateOrder) {
+        this.coordinateOrder = coordinateOrder;
+    }
+
+    // pour gerer le pb de ddesordre des coordonnées
+//    @Override
+//    public boolean equals(Object o) {
+//        if (this == o) return true;
+//        if (!(o instanceof PlotCoordinate thatz)) return false;
+//        return Objects.equals(getLatitude(), thatz.getLatitude()) &&
+//                Objects.equals(getLongitude(), thatz.getLongitude());
+//    }
+//
+//    @Override
+//    public int hashCode() {
+//        return Objects.hash(getLatitude(), getLongitude());
+//    }
 
 }

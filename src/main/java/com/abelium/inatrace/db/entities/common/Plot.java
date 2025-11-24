@@ -3,6 +3,7 @@ package com.abelium.inatrace.db.entities.common;
 import com.abelium.inatrace.db.base.BaseEntity;
 import com.abelium.inatrace.db.entities.codebook.ProductType;
 import jakarta.persistence.*;
+import jakarta.validation.constraints.NotNull;
 
 import java.util.*;
 
@@ -44,9 +45,16 @@ public class Plot extends BaseEntity {
     @Column
     private Double centerLongitude;
 
+    @Column
+    private Date synchronisationDate;
 
-    @OneToMany(mappedBy = "plot", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
-	private Set<PlotCoordinate> coordinates;
+    @Column
+    private Long collectorId;
+
+
+    @OneToMany(mappedBy = "plot", cascade = CascadeType.ALL,  fetch = FetchType.LAZY)
+    @OrderBy("coordinateOrder ASC")
+	private Set<PlotCoordinate> coordinates = new LinkedHashSet<>(); // preservera lordre des coordonées
 
 	@ManyToOne
 	private UserCustomer farmer;
@@ -117,7 +125,7 @@ public class Plot extends BaseEntity {
 
 	public Set<PlotCoordinate> getCoordinates() {
 		if (coordinates == null) {
-			coordinates = new HashSet<>();
+			coordinates = new LinkedHashSet<>(); // au lieu de HashSet pour preserver l'ordre
 		}
 		return coordinates;
 	}
@@ -150,4 +158,20 @@ public class Plot extends BaseEntity {
         this.centerLongitude = centerLongitude;
     }
 
+    public Date getSynchronisationDate() {
+        return synchronisationDate;
+    }
+
+    public void setSynchronisationDate(Date lastUpdated) {
+        this.synchronisationDate = lastUpdated;
+    }
+
+
+    public Long getCollectorId() {
+        return collectorId;
+    }
+
+    public void setCollectorId(Long collectorId) {
+        this.collectorId = collectorId;
+    }
 }

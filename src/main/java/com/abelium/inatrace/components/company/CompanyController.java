@@ -19,13 +19,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import jakarta.validation.Valid;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/company")
@@ -180,7 +183,8 @@ public class CompanyController {
             @RequestHeader(value = "language", defaultValue = "EN", required = false) Language language,
             @Valid @RequestBody ApiUserCustomer request
     ) throws ApiException {
-        return new ApiResponse<>(companyService.updateUserCustomer(request, authUser, language));
+        Long userId = getCurrentUserId();
+        return new ApiResponse<>(companyService.updateUserCustomer(request, authUser, language, userId));
     }
 
     @GetMapping(value = "/userCustomers/{id}/exportGeoData", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
@@ -208,7 +212,8 @@ public class CompanyController {
             @Valid @Parameter(description = "User customer ID", required = true) @PathVariable("id") Long id,
             @RequestParam("file") MultipartFile file) throws ApiException {
 
-        companyService.uploadUserCustomerGeoData(authUser, id, file);
+        Long userId = getCurrentUserId();
+        companyService.uploadUserCustomerGeoData(authUser, id, file, userId);
 
         return new ApiDefaultResponse();
     }
@@ -331,6 +336,19 @@ public class CompanyController {
             @RequestHeader(value = "language", defaultValue = "EN", required = false) Language language,
             @Valid ApiPaginatedRequest request) throws ApiException {
         return new ApiPaginatedResponse<>(companyService.getCompanyProductTypesList(id, request, authUser, language));
+    }
+
+    private Long getCurrentUserId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+
+        if (authentication != null && authentication.isAuthenticated()) {
+            Object principal = authentication.getPrincipal();
+
+            return ((CustomUserDetails) principal).getUserId();
+
+        }
+
+        throw new RuntimeException("Utilisateur non authentifié");
     }
 
 }
