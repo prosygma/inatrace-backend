@@ -419,7 +419,9 @@ public class CompanyApiTools {
 					.collect(Collectors.toList()));
 
 			apiUserCustomer.setPlots(
-					userCustomer.getPlots().stream().map(plot -> PlotMapper.toApiPlot(plot, language)).collect(Collectors.toList()));
+					userCustomer.getPlots().stream()
+                            .map(plot -> PlotMapper.toApiPlot(plot, language))
+                            .collect(Collectors.toList()));
 		}
 
 		return apiUserCustomer;
