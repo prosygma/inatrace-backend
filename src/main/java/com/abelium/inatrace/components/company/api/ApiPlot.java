@@ -2,6 +2,7 @@ package com.abelium.inatrace.components.company.api;
 
 import com.abelium.inatrace.api.ApiBaseEntity;
 import com.abelium.inatrace.components.product.api.ApiProductType;
+import com.abelium.inatrace.db.entities.common.User;
 import io.swagger.v3.oas.annotations.media.Schema;
 import org.springframework.validation.annotation.Validated;
 
@@ -46,6 +47,13 @@ public class ApiPlot extends ApiBaseEntity {
 
     @Schema(description = "center Longitude")
     private Double centerLongitude;
+
+    @Schema(description = "Date of synchronisation")
+    private Date synchronisationDate;
+
+    @Schema(description = "Collector id")
+    private Long collectorId;
+
 
 	public String getPlotName() {
 		return plotName;
@@ -143,4 +151,20 @@ public class ApiPlot extends ApiBaseEntity {
         this.centerLongitude = centerLongitude;
     }
 
+    public Date getSynchronisationDate() {
+        return synchronisationDate;
+    }
+
+    public void setSynchronisationDate(Date lastUpdated) {
+        this.synchronisationDate = lastUpdated;
+    }
+
+
+    public Long getCollectorId() {
+        return collectorId;
+    }
+
+    public void setCollectorId(Long collectorId) {
+        this.collectorId = collectorId;
+    }
 }

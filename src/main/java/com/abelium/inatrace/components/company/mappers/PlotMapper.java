@@ -29,10 +29,19 @@ public class PlotMapper {
         apiPlot.setCenterLatitude(plot.getCenterLatitude());
         apiPlot.setCenterLongitude(plot.getCenterLongitude());
 		apiPlot.setOrganicStartOfTransition(plot.getOrganicStartOfTransition());
-		apiPlot.setCoordinates(
-				plot.getCoordinates().stream().map(PlotMapper::toApiPlotCoordinate).collect(Collectors.toList()));
-		apiPlot.setLastUpdated(plot.getLastUpdated());
+        if(plot.getCollectorId() != null){
+            apiPlot.setCollectorId(plot.getCollectorId());
+        }
+        if(plot.getSynchronisationDate() != null){
+            apiPlot.setSynchronisationDate(plot.getSynchronisationDate());
+        }
 
+        if (plot.getCoordinates() != null) {
+            apiPlot.setCoordinates(
+                    plot.getCoordinates().stream().map(PlotMapper::toApiPlotCoordinate).collect(Collectors.toList()));
+        }
+
+        apiPlot.setLastUpdated(plot.getLastUpdated());
 		return apiPlot;
 	}
 
