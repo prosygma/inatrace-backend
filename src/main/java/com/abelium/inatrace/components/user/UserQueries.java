@@ -19,11 +19,7 @@ public class UserQueries extends BaseService {
 	
 	@Transactional
 	public User fetchUser(Long userId) throws ApiException {
-    	User user = Queries.get(em, User.class, userId);
-    	if (user == null) {
-    		throw new ApiException(ApiStatus.INVALID_REQUEST, "Invalid user id");
-    	}
-    	return user;
+        return Queries.get(em, User.class, userId);
 	}
 
 	@Transactional
