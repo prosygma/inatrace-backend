@@ -864,7 +864,7 @@ public class CompanyService extends BaseService {
 			Row plotRow = plotsSheet.createRow(plotsSheetRowNum++);
 
 			// Create farmer ID column (used to connect the farmer data from the Farmers sheet and the plot data in the Plots sheet)
-			plotRow.createCell(0, CellType.STRING).setCellValue(apiUserCustomer.getId());
+			plotRow.createCell(0, CellType.STRING).setCellValue(apiUserCustomer.getFarmerCompanyInternalId());
 			// plotsSheet.autoSizeColumn(0);
 
 			// Create plot ID column
@@ -930,9 +930,14 @@ public class CompanyService extends BaseService {
             if (apiPlot.getCollectorId() != null) {
                 String the_name = null;
                 try {
-                    the_name = String.valueOf(userQueries.fetchUser(apiPlot.getCollectorId()).getName());
+                    User user = userQueries.fetchUser(apiPlot.getCollectorId());
+                    if (user != null && user.getName() != null) {
+                        the_name = String.valueOf(user.getName());
+                    } else {
+                        the_name = ""; // ou une valeur par défaut
+                    }
                 } catch (ApiException e) {
-                    throw new RuntimeException(e);
+                    the_name = "";
                 }
                 plotRow.getCell(12).setCellValue(the_name);
             }
@@ -946,6 +951,7 @@ public class CompanyService extends BaseService {
 
 		for (ApiUserCustomer customer : apiUserCustomers) {
 			long farmerId = customer.getId();
+            String farmerInternalId= customer.getFarmerCompanyInternalId();
 
 			for (ApiPlot plot : customer.getPlots()) {
 				List<ApiPlotCoordinate> coordinates = plot.getCoordinates();
@@ -955,7 +961,7 @@ public class CompanyService extends BaseService {
 
 				Feature feature = createFeatureFromPlot(coordinates);
 				if (feature != null) {
-					enrichFeatureWithProperties(feature, farmerId, plot);
+					enrichFeatureWithProperties(feature,farmerId, farmerInternalId,  plot);
 					features.add(feature);
 				}
 			}
@@ -985,9 +991,12 @@ public class CompanyService extends BaseService {
 		}
 	}
 
-	private void enrichFeatureWithProperties(Feature feature, long farmerId, ApiPlot plot) {
+	private void enrichFeatureWithProperties(Feature feature, long farmerId, String farmerInternalId, ApiPlot plot) {
 		feature.addNumberProperty("farmerID", farmerId);
+        feature.addStringProperty("farmerInternalID", farmerInternalId);
 		feature.addNumberProperty("plotID", plot.getId());
+        feature.addNumberProperty("area", plot.getSize());
+        feature.addStringProperty("unit", plot.getUnit());
 		feature.addStringProperty("geoID", Optional.ofNullable(plot.getGeoId()).orElse(""));
 	}
 
@@ -1449,6 +1458,7 @@ public class CompanyService extends BaseService {
 				feature = Feature.fromGeometry(Polygon.fromLngLats(List.of(polygonCoordinates)));
 			}
 			feature.addStringProperty("geoID", Optional.ofNullable(plot.getGeoId()).orElse(""));
+            feature.addStringProperty("FarmerID", Optional.ofNullable(userCustomer.getFarmerCompanyInternalId()).orElse(""));
 			features.add(feature);
 		}
 
