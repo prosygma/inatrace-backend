@@ -48,6 +48,8 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.MessageSource;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -1499,7 +1501,16 @@ public class CompanyService extends BaseService {
                         apiPlot.setCollectorId(userId);
                         apiPlot.setSynchronisationDate(new Date());
 
-					List<Point> polygonCoordinates = polygon.coordinates().get(0);
+                        Feature centroidFeature = TurfMeasurement.center(feature);
+                        Point centroidPoint = (Point) centroidFeature.geometry();
+                        assert centroidPoint != null;
+                        double centroidLng = centroidPoint.longitude();
+                        double centroidLat = centroidPoint.latitude();
+
+                        apiPlot.setCenterLongitude(centroidLng);
+                        apiPlot.setCenterLatitude(centroidLat);
+
+						List<Point> polygonCoordinates = polygon.coordinates().get(0);
 
 					apiPlot.setCoordinates(polygonCoordinates.stream().map(lngLat -> {
 						ApiPlotCoordinate coordinate = new ApiPlotCoordinate();
@@ -1566,6 +1577,8 @@ public class CompanyService extends BaseService {
 		plot.setFarmer(userCustomer);
         plot.setCenterLatitude(request.getCenterLatitude());
         plot.setCenterLongitude(request.getCenterLongitude());
+        plot.setCollectorId(getCurrentUserId());
+        plot.setSynchronisationDate(new Date());
 		plot.setLastUpdated(new Date());
 
         plot.setCoordinates(new ArrayList<>());
@@ -2192,6 +2205,18 @@ public class CompanyService extends BaseService {
 		return productTypeProxy;
 	}
 
+    private Long getCurrentUserId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+
+        if (authentication != null && authentication.isAuthenticated()) {
+            Object principal = authentication.getPrincipal();
+
+            return ((CustomUserDetails) principal).getUserId();
+
+        }
+
+        throw new RuntimeException("Utilisateur non authentifié");
+    }
 
 	/**
 	 * Rounds a stored coordinate to {@link #COORDINATE_DECIMAL_PLACES} decimal places. Applied to
