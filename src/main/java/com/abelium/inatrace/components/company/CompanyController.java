@@ -234,7 +234,8 @@ public class CompanyController {
             @Valid @Parameter(description = "User customer ID", required = true) @PathVariable("id") Long id,
             @RequestHeader(value = "language", defaultValue = "EN", required = false) Language language,
             @Valid @RequestBody ApiPlot request) throws ApiException {
-        return new ApiResponse<>(companyService.createUserCustomerPlot(id, authUser, language, request));
+        Long userId = getCurrentUserId();
+        return new ApiResponse<>(companyService.createUserCustomerPlot(id, authUser, language, request, userId));
     }
 
     @PostMapping(value = "/userCustomers/{id}/plots/{plotId}/updateGeoID")
