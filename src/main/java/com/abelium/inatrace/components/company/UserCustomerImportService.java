@@ -159,11 +159,16 @@ public class UserCustomerImportService extends BaseService {
                 if (farmersMap.containsKey(internalId)) {
                     // Ajouter la nouvelle parcelle à l'agriculteur existant
                     ApiUserCustomer existingFarmer = farmersMap.get(internalId);
-                    List<ApiPlot> newPlots = createUserGeoData(
-                            row.getCell(33).getStringCellValue().trim(),
-                            companyProductTypes.get(0).getId()
-                    );
-                    existingFarmer.getPlots().addAll(newPlots);
+                    if (row.getCell(33) != null) {
+                        List<ApiPlot> newPlots = createUserGeoData(
+                                row.getCell(33).getStringCellValue().trim(),
+                                companyProductTypes.get(0).getId()
+                        );
+                        if (existingFarmer.getPlots() == null) {
+                            existingFarmer.setPlots(new ArrayList<>());
+                        }
+                        existingFarmer.getPlots().addAll(newPlots);
+                    }
                 } else {
 
                     ApiUserCustomer apiUserCustomer = new ApiUserCustomer();
