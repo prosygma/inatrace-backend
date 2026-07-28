@@ -44,6 +44,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.util.*;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Lazy
@@ -524,6 +525,20 @@ public class UserCustomerImportService extends BaseService {
             rowValidation.getColumnValidationErrors().add(new ApiUserCustomerImportColumnValidationError(getCellAddress(row.getCell(32)), UserCustomerImportCellErrorType.INCORRECT_TYPE));
         }
 
+        // Geo Data - optional, but if present it must be a well-formed, in-range POLYGON/POINT
+        Cell geoCell = row.getCell(33);
+        if (!emptyCell(geoCell)) {
+            if (invalidCell(geoCell, List.of(CellType.STRING))) {
+                rowValidation.getColumnValidationErrors().add(new ApiUserCustomerImportColumnValidationError(getCellAddress(geoCell), UserCustomerImportCellErrorType.INCORRECT_TYPE));
+            } else {
+                try {
+                    parseGeoDataCell(geoCell.getStringCellValue().trim());
+                } catch (IllegalArgumentException e) {
+                    rowValidation.getColumnValidationErrors().add(new ApiUserCustomerImportColumnValidationError(getCellAddress(geoCell), UserCustomerImportCellErrorType.INVALID_GEODATA));
+                }
+            }
+        }
+
         return rowValidation;
     }
 
@@ -605,88 +620,166 @@ public class UserCustomerImportService extends BaseService {
     }
 
 
+    enum GeoDataType {
+        POLYGON,
+        POINT
+    }
+
+    /** Result of parsing a Geo Data cell: the geometry type and its [latitude, longitude] vertices. */
+    static final class ParsedGeoData {
+
+        final GeoDataType type;
+        final List<double[]> points;
+
+        ParsedGeoData(GeoDataType type, List<double[]> points) {
+            this.type = type;
+            this.points = points;
+        }
+    }
+
+    private static final Pattern GEODATA_PAIR = Pattern.compile("-?\\d+(?:\\.\\d+)?\\s+-?\\d+(?:\\.\\d+)?");
+
+    private static final Pattern GEODATA_POLYGON_FORMAT = Pattern.compile(
+            "^POLYGON\\s*\\(\\(\\s*" + GEODATA_PAIR + "(?:\\s*,\\s*" + GEODATA_PAIR + ")*\\s*\\)\\)$",
+            Pattern.CASE_INSENSITIVE);
+
+    private static final Pattern GEODATA_POINT_FORMAT = Pattern.compile(
+            "^POINT\\s*\\(\\s*" + GEODATA_PAIR + "\\s*\\)$",
+            Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Parses a Geo Data cell value - either {@code POLYGON((lat1 lon1, lat2 lon2, ...))} or
+     * {@code POINT(lat lon)}, matching the format documented in the import template - validating
+     * the shape, the latitude/longitude ranges, and (for polygons) that there are at least 3
+     * distinct vertices.
+     *
+     * @return the parsed geometry, or {@code null} if {@code raw} is blank (geodata is optional)
+     * @throws IllegalArgumentException if {@code raw} is non-blank but not a valid geodata value
+     */
+    ParsedGeoData parseGeoDataCell(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+
+        String trimmed = raw.trim();
+        GeoDataType type;
+        String coordinatesStr;
+
+        if (GEODATA_POLYGON_FORMAT.matcher(trimmed).matches()) {
+            type = GeoDataType.POLYGON;
+            coordinatesStr = trimmed.replaceAll("(?i)^POLYGON\\s*\\(\\((.*)\\)\\)$", "$1");
+        } else if (GEODATA_POINT_FORMAT.matcher(trimmed).matches()) {
+            type = GeoDataType.POINT;
+            coordinatesStr = trimmed.replaceAll("(?i)^POINT\\s*\\((.*)\\)$", "$1");
+        } else {
+            throw new IllegalArgumentException("Unrecognized geodata format: " + trimmed);
+        }
+
+        List<double[]> points = new ArrayList<>();
+        List<double[]> distinctPoints = new ArrayList<>();
+        for (String rawPoint : coordinatesStr.split(",")) {
+            String[] tokens = rawPoint.trim().split("\\s+");
+            if (tokens.length != 2) {
+                throw new IllegalArgumentException("Expected exactly 2 numbers per point: " + rawPoint);
+            }
+
+            double lat = Double.parseDouble(tokens[0]);
+            double lon = Double.parseDouble(tokens[1]);
+
+            if (lat < -90 || lat > 90) {
+                throw new IllegalArgumentException("Latitude out of range: " + lat);
+            }
+            if (lon < -180 || lon > 180) {
+                throw new IllegalArgumentException("Longitude out of range: " + lon);
+            }
+
+            double[] point = new double[] { lat, lon };
+            points.add(point);
+
+            boolean duplicate = false;
+            for (double[] existing : distinctPoints) {
+                if (existing[0] == lat && existing[1] == lon) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                distinctPoints.add(point);
+            }
+        }
+
+        if (type == GeoDataType.POINT && points.size() != 1) {
+            throw new IllegalArgumentException("POINT must have exactly one coordinate pair");
+        }
+        if (type == GeoDataType.POLYGON && distinctPoints.size() < 3) {
+            throw new IllegalArgumentException("POLYGON must have at least 3 distinct vertices");
+        }
+
+        return new ParsedGeoData(type, points);
+    }
+
     private List<ApiPlot> createUserGeoData(String cellGeodata, Long productTypeId) {
         List<ApiPlot> plots = new ArrayList<>();
 
-        if (cellGeodata.isEmpty()) {
+        ParsedGeoData parsed;
+        try {
+            parsed = parseGeoDataCell(cellGeodata);
+        } catch (IllegalArgumentException e) {
+            // validateRow() already rejects malformed geodata cells before a row is accepted for
+            // import, so this should never trigger - guard kept only against an internal bug.
+            logger.error("Unexpected invalid geodata reached createUserGeoData: " + cellGeodata, e);
             return plots;
         }
 
-        try {
-            if (cellGeodata.startsWith("POLYGON")) {
-                // Extraction des coordonnées du POLYGON
-                String coordinatesStr = cellGeodata.replaceAll("POLYGON\\s*\\(\\((.*)\\)\\)", "$1");
-                String[] points = coordinatesStr.split(",\\s*");
+        if (parsed == null) {
+            return plots;
+        }
 
-                List<Point> polygonPoints = new ArrayList<>();
-                for (String point : points) {
-                    String[] lngLat = point.trim().split("\\s+");
-                    logger.info("point: " + lngLat[0] + ", " + lngLat[1]);
-                    double lng = Double.parseDouble(lngLat[1]);
-                    double lat = Double.parseDouble(lngLat[0]);
-                    polygonPoints.add(Point.fromLngLat(lng, lat));
-                }
+        ApiProductType productType = new ApiProductType();
+        productType.setId(productTypeId);
 
-                // Création du polygone et calcul de la superficie
-                Polygon polygon = Polygon.fromLngLats(Collections.singletonList(polygonPoints));
-                Feature feature = Feature.fromGeometry(polygon);
+        if (parsed.type == GeoDataType.POLYGON) {
+            List<Point> polygonPoints = parsed.points.stream()
+                    .map(p -> Point.fromLngLat(p[1], p[0]))
+                    .collect(Collectors.toList());
 
-                ApiPlot plot = new ApiPlot();
-                plot.setPlotName("Plot 1"); // À adapter si multiples parcelles
+            Polygon polygon = Polygon.fromLngLats(Collections.singletonList(polygonPoints));
+            Feature feature = Feature.fromGeometry(polygon);
 
-                // Calcul superficie (comme dans le code original)
-                double areaM2 = TurfMeasurement.area(feature);
-                double areaHa = Math.floor((areaM2 / 1000) * 100) / 100.0;
-                plot.setSize(areaHa);
-                plot.setUnit("ha");
+            ApiPlot plot = new ApiPlot();
+            plot.setPlotName("Plot 1");
 
-                // Conversion des coordonnées
-                plot.setCoordinates(polygonPoints.stream().map(p -> {
-                    ApiPlotCoordinate coord = new ApiPlotCoordinate();
-                    coord.setLongitude(p.longitude());
-                    coord.setLatitude(p.latitude());
-                    return coord;
-                }).collect(Collectors.toList()));
+            double areaM2 = TurfMeasurement.area(feature);
+            double areaHa = Math.floor((areaM2 / 1000) * 100) / 100.0;
+            plot.setSize(areaHa);
+            plot.setUnit("ha");
 
-                // Définition de la culture (comme dans le code original)
-                ApiProductType productType = new ApiProductType();
-                productType.setId(productTypeId);
-                plot.setCrop(productType);
-
-                plots.add(plot);
-
-            } else if (cellGeodata.startsWith("POINT")) {
-                // Traitement d'un POINT (similaire au code original)
-                String coordinatesStr = cellGeodata.replaceAll("POINT\\s*\\((.*)\\)", "$1");
-                String[] lngLat = coordinatesStr.split("\\s+");
-
-                Point point = Point.fromLngLat(
-                        Double.parseDouble(lngLat[1]),
-                        Double.parseDouble(lngLat[0])
-                );
-
-                ApiPlot plot = new ApiPlot();
-                plot.setPlotName("Point 1");
-
+            plot.setCoordinates(parsed.points.stream().map(p -> {
                 ApiPlotCoordinate coord = new ApiPlotCoordinate();
-                coord.setLongitude(point.longitude());
-                coord.setLatitude(point.latitude());
-                plot.setCoordinates(Collections.singletonList(coord));
+                coord.setLatitude(p[0]);
+                coord.setLongitude(p[1]);
+                return coord;
+            }).collect(Collectors.toList()));
 
-                // Définition de la culture
-                ApiProductType productType = new ApiProductType();
-                productType.setId(productTypeId);
-                plot.setCrop(productType);
+            plot.setCrop(productType);
+            plots.add(plot);
 
-                plots.add(plot);
-            }
+        } else {
+            double[] point = parsed.points.get(0);
 
-        } catch (Exception e) {
-            logger.error("Erreur de parsing des données géo: " + cellGeodata, e);
+            ApiPlot plot = new ApiPlot();
+            plot.setPlotName("Point 1");
+
+            ApiPlotCoordinate coord = new ApiPlotCoordinate();
+            coord.setLatitude(point[0]);
+            coord.setLongitude(point[1]);
+            plot.setCoordinates(Collections.singletonList(coord));
+
+            plot.setCrop(productType);
+            plots.add(plot);
         }
 
         return plots;
     }
-
 
 }
