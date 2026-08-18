@@ -6,9 +6,9 @@ digitalization of supply chains, connects every actor along the supply chain, as
 
 Project is composed of 3 parts:
 
-* [Angular frontend](https://github.com/INATrace/fe/tree/main)
-* [Java backend](https://github.com/INATrace/backend/tree/main)
-* [Coffee network](https://github.com/INATrace/coffee-network/tree/main)
+* [Angular frontend](https://github.com/agstack/inatrace-frontend/tree/main)
+* [Java backend](https://github.com/agstack/inatrace-backend/tree/main)
+* [Coffee network](https://github.com/agstack/inatrace-coffee-network/tree/main)
 
 # INATrace 2
 This new major release includes new functionalities, refactorings, optimizations and bugfixes. The most important additions and changes are:
@@ -172,7 +172,7 @@ When accessing secured endpoints, the token has to be provided in the `Cookie` r
 
 ### Endpoints
 
-A complete list of endpoints is available [here](https://github.com/INATrace/backend/tree/main/src/main/java/com/abelium/inatrace/components).
+A complete list of endpoints is available [here](https://github.com/agstack/inatrace-backend/tree/main/src/main/java/com/abelium/inatrace/components).
 
 ### Common requests
 
@@ -294,7 +294,7 @@ Response:
 ```
 
 Response is structured in following way:
-It always contains attribute [`status`](https://github.com/INATrace/backend/blob/main/src/main/java/com/abelium/INATrace/api/ApiStatus.java).
+It always contains attribute [`status`](https://github.com/agstack/inatrace-backend/blob/main/src/main/java/com/abelium/INATrace/api/ApiStatus.java).
 If response is successful, then `status` is equal to 'OK' and appropriate response can be found under `data` attribute.
 If response is unsuccessful (see above link for other statuses), then `errorMessage` attribute is returned.
 
@@ -359,7 +359,7 @@ If you are using a database management tool, use the following parameters to cre
 
 ### Entities
 
-A complete list of entities is available [here](https://github.com/INATrace/backend/tree/main/src/main/java/com/abelium/inatrace/db).
+A complete list of entities is available [here](https://github.com/agstack/inatrace-backend/tree/main/src/main/java/com/abelium/inatrace/db).
 
 Below is the entity graph for an initialized INATrace database. The full-sized vector image can be found [here](docs/images/inatrace_db.svg).
 
