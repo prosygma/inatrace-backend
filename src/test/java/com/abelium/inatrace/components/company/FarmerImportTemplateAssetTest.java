@@ -11,6 +11,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -29,8 +30,6 @@ class FarmerImportTemplateAssetTest {
 
     private static final String TEMPLATE_WITH_KNOWN_ENGLISH_HEADER =
             RESOURCES + "Template_list_of_farmers_other_countries_en.xlsx";
-
-    private final UserCustomerImportService service = new UserCustomerImportService();
 
     @ParameterizedTest
     @ValueSource(strings = {
@@ -57,6 +56,48 @@ class FarmerImportTemplateAssetTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "Template_list_of_farmers_other_countries_en.xlsx",
+            "Template_list_of_farmers_Rwanda_en.xlsx",
+            "Plantilla_listado_de_agricultores_otros_paises_es.xlsx",
+            "Plantilla_listado_de_agricultores_Honduras_es.xlsx"
+    })
+    void geoIdColumn_isAtIndex34_afterTheGeoDataColumn(String fileName) throws Exception {
+        try (InputStream in = new FileInputStream(RESOURCES + fileName);
+             XSSFWorkbook workbook = new XSSFWorkbook(in)) {
+
+            Row headerRow = workbook.getSheetAt(0).getRow(4);
+
+            Cell geoIdHeader = headerRow.getCell(34);
+            assertEquals(CellType.STRING, geoIdHeader.getCellType(), fileName + ": column 34 header is missing");
+            assertTrue(geoIdHeader.getStringCellValue().contains("GeoID"),
+                    fileName + ": column 34 should be the GeoID column, was: " + geoIdHeader.getStringCellValue());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "Template_list_of_farmers_other_countries_en.xlsx",
+            "Template_list_of_farmers_Rwanda_en.xlsx",
+            "Plantilla_listado_de_agricultores_otros_paises_es.xlsx",
+            "Plantilla_listado_de_agricultores_Honduras_es.xlsx"
+    })
+    void geoDataHeader_documentsEveryAcceptedFormat(String fileName) throws Exception {
+        try (InputStream in = new FileInputStream(RESOURCES + fileName);
+             XSSFWorkbook workbook = new XSSFWorkbook(in)) {
+
+            String header = workbook.getSheetAt(0).getRow(4).getCell(33).getStringCellValue();
+
+            assertTrue(header.contains("POINT"), fileName + ": POINT not documented, was: " + header);
+            assertTrue(header.contains("GeoJSON"), fileName + ": GeoJSON not documented, was: " + header);
+            assertTrue(header.toLowerCase().contains("geoshape"),
+                    fileName + ": ODK/Kobo geoshape not documented, was: " + header);
+            assertTrue(header.contains("P1(...)"),
+                    fileName + ": multi-plot form not documented, was: " + header);
+        }
+    }
+
     @Test
     void realTemplateRow_withValidPolygon_parsesThroughRealPoiCell() throws Exception {
         try (InputStream in = new FileInputStream(TEMPLATE_WITH_KNOWN_ENGLISH_HEADER);
@@ -66,13 +107,35 @@ class FarmerImportTemplateAssetTest {
             Row dataRow = sheet.createRow(5); // first data row per UserCustomerImportService.rowIndex = 5
             dataRow.createCell(33).setCellValue("POLYGON((5.1717367 10.2352433, 5.1718067 10.235235, 5.1719302 10.2352027))");
 
-            UserCustomerImportService.ParsedGeoData parsed =
-                    service.parseGeoDataCell(dataRow.getCell(33).getStringCellValue().trim());
+            List<GeoDataParser.ParsedPlot> plots =
+                    GeoDataParser.parse(dataRow.getCell(33).getStringCellValue().trim(), "CM");
 
-            assertEquals(UserCustomerImportService.GeoDataType.POLYGON, parsed.type);
-            assertEquals(3, parsed.points.size());
-            assertEquals(5.1717367, parsed.points.get(0)[0]);
-            assertEquals(10.2352433, parsed.points.get(0)[1]);
+            assertEquals(1, plots.size());
+            assertEquals(GeoDataParser.GeoDataType.POLYGON, plots.get(0).getType());
+            assertEquals(3, plots.get(0).getPoints().size());
+            assertEquals(5.1717367, plots.get(0).getPoints().get(0)[0]);
+            assertEquals(10.2352433, plots.get(0).getPoints().get(0)[1]);
+        }
+    }
+
+    @Test
+    void realTemplateRow_withKoboGeoshape_parsesThroughRealPoiCell() throws Exception {
+        try (InputStream in = new FileInputStream(TEMPLATE_WITH_KNOWN_ENGLISH_HEADER);
+             XSSFWorkbook workbook = new XSSFWorkbook(in)) {
+
+            XSSFSheet sheet = workbook.getSheetAt(0);
+            Row dataRow = sheet.createRow(5);
+            // Verbatim from a UCCAO collection - the format users actually paste into this column
+            dataRow.createCell(33).setCellValue(
+                    "5.1717367 10.2352433 1267.1000000000001 1.45;5.1718067 10.235235 1267.8 1.3;"
+                            + "5.1719302 10.2352027 1267.0 1.3;5.1717367 10.2352433 1267.1000000000001 1.45");
+
+            List<GeoDataParser.ParsedPlot> plots =
+                    GeoDataParser.parse(dataRow.getCell(33).getStringCellValue().trim(), "CM");
+
+            assertEquals(1, plots.size());
+            assertEquals(GeoDataParser.GeoDataType.POLYGON, plots.get(0).getType());
+            assertEquals(4, plots.get(0).getPoints().size());
         }
     }
 
@@ -87,7 +150,7 @@ class FarmerImportTemplateAssetTest {
             dataRow.createCell(33).setCellValue("POLYGON((95.17 10.23, 96.18 10.24, 97.19 10.25))");
 
             String cellValue = dataRow.getCell(33).getStringCellValue().trim();
-            assertThrows(IllegalArgumentException.class, () -> service.parseGeoDataCell(cellValue));
+            assertThrows(IllegalArgumentException.class, () -> GeoDataParser.parse(cellValue, "CM"));
         }
     }
 }
