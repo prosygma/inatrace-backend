@@ -374,13 +374,7 @@ public class CompanyService extends BaseService {
             plot.setCenterLatitude(apiPlot.getCenterLatitude());
 			plot.setLastUpdated(new Date());
 
-			for (ApiPlotCoordinate apiPlotCoordinate : apiPlot.getCoordinates()) {
-				PlotCoordinate plotCoordinate = new PlotCoordinate();
-				plotCoordinate.setLatitude(apiPlotCoordinate.getLatitude());
-				plotCoordinate.setLongitude(apiPlotCoordinate.getLongitude());
-				plotCoordinate.setPlot(plot);
-				plot.getCoordinates().add(plotCoordinate);
-			}
+			populatePlotCoordinates(plot, apiPlot.getCoordinates());
 
 			// Generate Plot GeoID
 			plot.setGeoId(generatePlotGeoID(plot.getCoordinates()));
@@ -1146,17 +1140,8 @@ public class CompanyService extends BaseService {
                 plot.setCenterLatitude(apiPlot.getCenterLatitude());
 				plot.setLastUpdated(new Date());
 
-                // Initialiser avec LinkedHashSet pour préserver l'ordre
                 plot.setCoordinates(new LinkedHashSet<>());
-
-				for (ApiPlotCoordinate apiPlotCoordinate : apiPlot.getCoordinates()) {
-					PlotCoordinate plotCoordinate = new PlotCoordinate();
-					plotCoordinate.setLatitude(apiPlotCoordinate.getLatitude());
-					plotCoordinate.setLongitude(apiPlotCoordinate.getLongitude());
-					plotCoordinate.setPlot(plot);
-					plot.getCoordinates().add(plotCoordinate);
-
-				}
+                populatePlotCoordinates(plot, apiPlot.getCoordinates());
 
 				// Generate Plot GeoID
 				//plot.setGeoId(generatePlotGeoID(plot.getCoordinates()));
@@ -1288,26 +1273,10 @@ public class CompanyService extends BaseService {
 					.filter(p -> p.getId() !=  null && p.getId().equals(apiPlot.getId())).findFirst()
 					.orElse(new Plot());
 
-			plot.getCoordinates().removeIf(coordinate -> apiPlot.getCoordinates().stream()
-					.noneMatch(apiCoordinate -> coordinate.getId().equals(apiCoordinate.getId())));
-
-            plot.setCoordinates(new LinkedHashSet<>());
-
-			for (ApiPlotCoordinate apiPlotCoordinate : apiPlot.getCoordinates()) {
-				PlotCoordinate plotCoordinate = plot.getCoordinates().stream()
-						.filter(p -> p.getId() != null && p.getId()
-								.equals(apiPlotCoordinate.getId()))
-						.findFirst()
-						.orElse(new PlotCoordinate());
-
-				plotCoordinate.setLatitude(apiPlotCoordinate.getLatitude());
-				plotCoordinate.setLongitude(apiPlotCoordinate.getLongitude());
-
-				if (plotCoordinate.getId() == null) {
-					plotCoordinate.setPlot(plot);
-					plot.getCoordinates().add(plotCoordinate);
-				}
-			}
+			// Rebuild the coordinate set: clear (so orphanRemoval deletes the old rows instead of
+			// leaving duplicates) then repopulate with de-duplicated, order-repaired coordinates.
+			plot.getCoordinates().clear();
+			populatePlotCoordinates(plot, apiPlot.getCoordinates());
 
 			plot.setPlotName(apiPlot.getPlotName());
 			plot.setNumberOfPlants(apiPlot.getNumberOfPlants());
@@ -1536,29 +1505,13 @@ public class CompanyService extends BaseService {
         plot.setCenterLongitude(request.getCenterLongitude());
 		plot.setLastUpdated(new Date());
 
-        // INITIALISATION EXPLICITE AVEC LinkedHashSet
         plot.setCoordinates(new LinkedHashSet<>());
+        populatePlotCoordinates(plot, request.getCoordinates());
 
-        int order = 0; // pour save lordre des coordonnées
-		for (ApiPlotCoordinate apiPlotCoordinate : request.getCoordinates()) {
-			PlotCoordinate plotCoordinate = new PlotCoordinate();
-			plotCoordinate.setLatitude(apiPlotCoordinate.getLatitude());
-			plotCoordinate.setLongitude(apiPlotCoordinate.getLongitude());
-            plotCoordinate.setCoordinateOrder(order++); // Définir l'ordre
-			plotCoordinate.setPlot(plot);
-			plot.getCoordinates().add(plotCoordinate);
-            System.out.println("Coordonnée ajoutée: " + apiPlotCoordinate.getLatitude() + ", " + apiPlotCoordinate.getLongitude());
-
-		}
-
-        System.out.println("Nombre de coordonnées après ajout: " + plot.getCoordinates().size());
 		// Generate Plot GeoID
 		plot.setGeoId(generatePlotGeoID(plot.getCoordinates()));
 
 		em.persist(plot);
-
-        Plot savedPlot = em.find(Plot.class, plot.getId());
-        System.out.println("Nombre de coordonnées en base: " + (savedPlot != null ? savedPlot.getCoordinates().size() : "null"));
 
 		return PlotMapper.toApiPlot(plot, language);
 	}
@@ -1583,6 +1536,163 @@ public class CompanyService extends BaseService {
 		}
 
 		return PlotMapper.toApiPlot(plot, language);
+	}
+
+	/**
+	 * Populate a plot's coordinate collection from the incoming API coordinates:
+	 * de-duplicate identical points, and repair the ordering. If the received ring self-intersects,
+	 * it is untangled in place (see {@link #untangleRing}) to produce a simple (non
+	 * self-intersecting) polygon; an already-simple ring is stored in the exact order received.
+	 * The result is stored as a closed ring (last point == first) with sequential coordinateOrder,
+	 * matching the convention the mobile app relies on when reading plots back.
+	 */
+	private void populatePlotCoordinates(Plot plot, List<ApiPlotCoordinate> input) {
+		List<double[]> ordered = normalizePlotCoordinates(input);
+		int order = 0;
+		for (double[] point : ordered) {
+			PlotCoordinate plotCoordinate = new PlotCoordinate();
+			plotCoordinate.setLatitude(point[0]);
+			plotCoordinate.setLongitude(point[1]);
+			plotCoordinate.setCoordinateOrder(order++);
+			plotCoordinate.setPlot(plot);
+			plot.getCoordinates().add(plotCoordinate);
+		}
+	}
+
+	/**
+	 * Returns the [latitude, longitude] points to persist for a plot: distinct points (first
+	 * occurrence order), untangled only when the received ring self-intersects, and closed
+	 * (first point appended as last) when it forms a polygon (>= 3 distinct points).
+	 */
+	List<double[]> normalizePlotCoordinates(List<ApiPlotCoordinate> input) {
+		List<double[]> points = new ArrayList<>();
+		if (input != null) {
+			for (ApiPlotCoordinate coordinate : input) {
+				if (coordinate.getLatitude() == null || coordinate.getLongitude() == null) {
+					continue;
+				}
+				double lat = coordinate.getLatitude();
+				double lng = coordinate.getLongitude();
+				boolean duplicate = false;
+				for (double[] existing : points) {
+					if (existing[0] == lat && existing[1] == lng) {
+						duplicate = true;
+						break;
+					}
+				}
+				if (!duplicate) {
+					points.add(new double[] { lat, lng });
+				}
+			}
+		}
+
+		// Fewer than 3 distinct points cannot form a polygon; store as-is.
+		if (points.size() < 3) {
+			return points;
+		}
+
+		// Repair the order only when the received ring self-intersects. The received order is the
+		// perimeter walk recorded in the field and is the best evidence we have of the plot's true
+		// shape, so it is untangled in place rather than re-derived; if it cannot be untangled it
+		// is kept exactly as received.
+		if (ringSelfIntersects(points)) {
+			List<double[]> untangled = new ArrayList<>(points);
+			if (untangleRing(untangled)) {
+				points = untangled;
+			} else {
+				logger.warn("Plot ring of {} points could not be untangled within {} reversals; "
+						+ "storing the received order unchanged", points.size(), MAX_UNTANGLE_REVERSALS);
+			}
+		}
+
+		// Store as a closed ring (mobile does not re-close the ring on read).
+		List<double[]> ring = new ArrayList<>(points);
+		ring.add(new double[] { points.get(0)[0], points.get(0)[1] });
+		return ring;
+	}
+
+	/**
+	 * Upper bound on the 2-opt reversals {@link #untangleRing} will attempt. A ring still tangled
+	 * after this many passes is not something we can repair blindly, so the received order is kept.
+	 */
+	private static final int MAX_UNTANGLE_REVERSALS = 1000;
+
+	/**
+	 * Removes self-intersections from a ring while preserving the received walk order as far as
+	 * possible: whenever edges (i, i+1) and (j, j+1) cross, the sub-path between them is reversed
+	 * (the classic 2-opt move). That removes the crossing and leaves every other edge untouched, so
+	 * a track with one GPS wobble is fixed by a single reversal instead of being re-ordered wholesale.
+	 * A ring that is already simple is left exactly as it was received.
+	 * <p>
+	 * Do NOT replace this with a sort by angle around the centroid. That produces a crossing-free
+	 * ring only for star-shaped plots; on a concave field it zig-zags in and out of the boundary,
+	 * leaving needle-thin spikes across the interior while still passing {@link #ringSelfIntersects}
+	 * - which is exactly how it went unnoticed before.
+	 *
+	 * @param points ring vertices, mutated in place; only meaningful for >= 3 distinct points
+	 * @return true if the ring is simple when this returns, false if it gave up (points may be
+	 *         partially reordered, so the caller should work on a copy and discard it on false)
+	 */
+	static boolean untangleRing(List<double[]> points) {
+		int n = points.size();
+		int reversals = 0;
+
+		boolean crossingFound = true;
+		while (crossingFound) {
+			crossingFound = false;
+
+			scan:
+			for (int i = 0; i < n - 1; i++) {
+				for (int j = i + 2; j < n; j++) {
+					// Skip the wrap-around pair, which always shares a vertex with edge (0, 1).
+					if (i == 0 && j == n - 1) {
+						continue;
+					}
+					if (segmentsIntersect(points.get(i), points.get(i + 1), points.get(j), points.get((j + 1) % n))) {
+						Collections.reverse(points.subList(i + 1, j + 1));
+						crossingFound = true;
+						reversals++;
+						break scan;
+					}
+				}
+			}
+
+			if (reversals > MAX_UNTANGLE_REVERSALS) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/** True if the closed polygon through the given distinct vertices has any crossing edges. */
+	static boolean ringSelfIntersects(List<double[]> points) {
+		int n = points.size();
+		for (int i = 0; i < n; i++) {
+			double[] a1 = points.get(i);
+			double[] a2 = points.get((i + 1) % n);
+			for (int j = i + 1; j < n; j++) {
+				// Skip edges that share a vertex (adjacent edges, including the wrap-around pair).
+				if (j == i + 1 || (i == 0 && j == n - 1)) {
+					continue;
+				}
+				double[] b1 = points.get(j);
+				double[] b2 = points.get((j + 1) % n);
+				if (segmentsIntersect(a1, a2, b1, b2)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private static boolean segmentsIntersect(double[] p1, double[] p2, double[] p3, double[] p4) {
+		return ccw(p1, p3, p4) != ccw(p2, p3, p4) && ccw(p1, p2, p3) != ccw(p1, p2, p4);
+	}
+
+	/** Orientation sign of (b-a) x (c-a) using x = longitude (index 1), y = latitude (index 0). */
+	private static boolean ccw(double[] a, double[] b, double[] c) {
+		return (b[1] - a[1]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[1] - a[1]) > 0;
 	}
 
 	private String generatePlotGeoID(Set<PlotCoordinate> coordinatesSet) {

@@ -8,6 +8,7 @@ import com.abelium.inatrace.components.common.DocumentData;
 import com.abelium.inatrace.components.common.StorageService;
 import com.abelium.inatrace.components.company.api.*;
 import com.abelium.inatrace.components.company.types.UserCustomerImportCellErrorType;
+import com.abelium.inatrace.components.geoid.FaoGeoIdClientService;
 import com.abelium.inatrace.components.product.ProductTypeMapper;
 import com.abelium.inatrace.components.product.api.ApiBankInformation;
 import com.abelium.inatrace.components.product.api.ApiFarmInformation;
@@ -44,7 +45,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.util.*;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Lazy
@@ -59,6 +59,23 @@ public class UserCustomerImportService extends BaseService {
 
     @Autowired
     private StorageService storageService;
+
+    @Autowired(required = false)
+    private FaoGeoIdClientService faoGeoIdClientService;
+
+    /**
+     * Column index of the "Geo Data" cell, which accepts any of the formats
+     * {@link GeoDataParser} recognises.
+     */
+    static final int GEO_DATA_COLUMN = 33;
+
+    /** Column index of the "GeoID (FAO)" cell, appended after {@link #GEO_DATA_COLUMN}. */
+    static final int GEO_ID_COLUMN = 34;
+
+    /** Highest column index the importer reads. */
+    private static final int LAST_COLUMN = GEO_ID_COLUMN;
+
+    private static final String PLOT_NAME_PREFIX = "Plot ";
 
     @Transactional
     public ApiUserCustomerImportResponse importFarmersSpreadsheet(Long companyId, Long documentId, CustomUserDetails authUser, Language language) throws ApiException {
@@ -82,17 +99,26 @@ public class UserCustomerImportService extends BaseService {
 
         XSSFSheet mainSheet = mainWorkbook.getSheetAt(0);
 
-
+        // A KoboToolbox / ODK export is read directly rather than making the user re-key it into
+        // the template - re-keying is where plots get attached to the wrong farmer or dropped.
+        if (KoboExportReader.isKoboExport(mainWorkbook)) {
+            return importKoboExport(mainWorkbook, companyId, authUser, language);
+        }
 
         // boolean means that the second product is also present in the Excel
         boolean hasSecondProductType = checkSecondProductType(mainSheet);
 
         int rowIndex = 5;
-        int successful = 0;
 
+        // Rows are grouped into one farmer only when they share a non-blank company-internal ID.
+        // The ID column is optional and is empty in most real files, so rows without one are each
+        // their own farmer - keying the map on null would merge the whole file into a single farmer.
         Map<String, ApiUserCustomer> farmersMap = new HashMap<>(); // Clé: internalId
-        List<ApiUserCustomer> duplicates = new ArrayList<>();
-        List<ApiUserCustomer> toAdd = new ArrayList<>();
+        List<ApiUserCustomer> farmers = new ArrayList<>();
+
+        // A GeoID always resolves to the same boundary, so resolve each distinct one only once per
+        // file rather than once per row that references it.
+        Map<String, List<ApiPlot>> geoIdCache = new HashMap<>();
 
         //Save the table of internal id of new farmers
 //        List<String> tabInternalId = new ArrayList<>();
@@ -113,6 +139,10 @@ public class UserCustomerImportService extends BaseService {
 
         ApiUserCustomerImportResponse response = new ApiUserCustomerImportResponse();
 
+        // The farmer a geo-only continuation row belongs to: the one the row above referred to,
+        // which is not necessarily the one created most recently.
+        ApiUserCustomer lastFarmer = null;
+
         // Go through every row and validate data
         while (true) {
 
@@ -122,26 +152,46 @@ public class UserCustomerImportService extends BaseService {
                 break;
             }
 
+            // A row with geo data and nothing else continues the farmer above rather than starting
+            // a new one, so the farmer columns are not required on it.
+            if (geoOnlyRow(row)) {
+
+                ApiUserCustomerImportRowValidationError geoValidation =
+                        new ApiUserCustomerImportRowValidationError(row.getRowNum());
+                validateGeoCells(row, geoValidation);
+
+                if (!geoValidation.getColumnValidationErrors().isEmpty()) {
+                    response.getValidationErrors().add(geoValidation);
+                } else if (lastFarmer == null) {
+                    // No farmer above to attach these plots to.
+                    geoValidation.getColumnValidationErrors().add(new ApiUserCustomerImportColumnValidationError(
+                            getCellAddress(row.getCell(GEO_DATA_COLUMN) != null
+                                    ? row.getCell(GEO_DATA_COLUMN) : row.getCell(GEO_ID_COLUMN)),
+                            UserCustomerImportCellErrorType.INVALID_GEODATA));
+                    response.getValidationErrors().add(geoValidation);
+                } else {
+                    addPlotsToFarmer(lastFarmer,
+                            createUserGeoData(row, companyProductTypes.get(0).getId(), geoIdCache));
+                }
+
+                rowIndex++;
+                continue;
+            }
+
             ApiUserCustomerImportRowValidationError rowValidation = validateRow(row);
 
             // If there are no column validation errors, the row is valid
             if (rowValidation.getColumnValidationErrors().isEmpty()) {
                 String internalId = getStringOrNumeric(row.getCell(0));
+                boolean groupable = internalId != null && !internalId.isBlank();
 
                 // Vérifier si l'agriculteur est déjà dans la map
-                if (farmersMap.containsKey(internalId)) {
+                if (groupable && farmersMap.containsKey(internalId)) {
                     // Ajouter la nouvelle parcelle à l'agriculteur existant
                     ApiUserCustomer existingFarmer = farmersMap.get(internalId);
-                    if (row.getCell(33) != null) {
-                        List<ApiPlot> newPlots = createUserGeoData(
-                                row.getCell(33).getStringCellValue().trim(),
-                                companyProductTypes.get(0).getId()
-                        );
-                        if (existingFarmer.getPlots() == null) {
-                            existingFarmer.setPlots(new ArrayList<>());
-                        }
-                        existingFarmer.getPlots().addAll(newPlots);
-                    }
+                    addPlotsToFarmer(existingFarmer,
+                            createUserGeoData(row, companyProductTypes.get(0).getId(), geoIdCache));
+                    lastFarmer = existingFarmer;
                 } else {
 
                     ApiUserCustomer apiUserCustomer = new ApiUserCustomer();
@@ -213,13 +263,15 @@ public class UserCustomerImportService extends BaseService {
                     apiUserCustomer.getBank().setBankName(getStringOrNumeric(row.getCell(31)));
                     apiUserCustomer.getBank().setAdditionalInformation(getStringOrNumeric(row.getCell(32)));
 
-                    // GeoData
-                    if (row.getCell(33) != null) {
-                        String theLineGeodata = row.getCell(33).getStringCellValue().trim();
-                        apiUserCustomer.setPlots(createUserGeoData(theLineGeodata, companyProductTypes.get(0).getId()));
-                    }
+                    // GeoData - from the Geo Data cell, the GeoID cell, or both
+                    apiUserCustomer.setPlots(createUserGeoData(row, companyProductTypes.get(0).getId(), geoIdCache));
+                    nameFarmerPlots(apiUserCustomer);
 
-                    farmersMap.put(internalId, apiUserCustomer);
+                    if (groupable) {
+                        farmersMap.put(internalId, apiUserCustomer);
+                    }
+                    farmers.add(apiUserCustomer);
+                    lastFarmer = apiUserCustomer;
                 }
 
             } else {
@@ -230,7 +282,27 @@ public class UserCustomerImportService extends BaseService {
             rowIndex++;
         }
 
-        for (ApiUserCustomer farmer : farmersMap.values()) {
+        persistFarmers(farmers, companyId, authUser, language, response);
+
+        return response;
+    }
+
+    /**
+     * Persists the farmers an import produced, unless the file had validation errors - in which
+     * case nothing at all is persisted, so a partly-rejected file never leaves half its farmers
+     * behind. Farmers that already exist are reported back as duplicates for the user to accept or
+     * reject, but their new plots are attached straight away.
+     */
+    private void persistFarmers(List<ApiUserCustomer> farmers,
+                                Long companyId,
+                                CustomUserDetails authUser,
+                                Language language,
+                                ApiUserCustomerImportResponse response) throws ApiException {
+
+        List<ApiUserCustomer> duplicates = new ArrayList<>();
+        List<ApiUserCustomer> toAdd = new ArrayList<>();
+
+        for (ApiUserCustomer farmer : farmers) {
             if (companyService.existsUserCustomer(farmer)) {
                 duplicates.add(farmer);
             } else {
@@ -238,16 +310,8 @@ public class UserCustomerImportService extends BaseService {
             }
         }
 
-        // If no validation errors are present, proceed and add the user customers; If validation errors are present,
-        // no user customer should be persisted
-//        if (response.getValidationErrors().isEmpty()) {
-//            for (ApiUserCustomer apiUserCustomer : toAdd) {
-//                companyService.addUserCustomer(companyId, apiUserCustomer, authUser, language);
-//                successful++;
-//            }
-//
-//            response.setDuplicates(duplicates);
-//        }
+        int successful = 0;
+
         if (response.getValidationErrors().isEmpty()) {
             // Nouveaux agriculteurs
             for (ApiUserCustomer apiUserCustomer : toAdd) {
@@ -259,7 +323,6 @@ public class UserCustomerImportService extends BaseService {
             for (ApiUserCustomer duplicate : duplicates) {
                 try {
                     companyService.addPlotsToExistingFarmer(duplicate);
-//                    successful++;
                 } catch (Exception e) {
                     logger.error("Failed to add plots to farmer: "
                             + duplicate.getFarmerCompanyInternalId(), e);
@@ -270,8 +333,152 @@ public class UserCustomerImportService extends BaseService {
         }
 
         response.setSuccessful(successful);
+    }
+
+    /**
+     * Imports a KoboToolbox / ODK export directly. The export already links every plot of a repeat
+     * group to its submission, so multi-plot farmers come through intact - which is exactly what
+     * gets lost when the same data is copied into the template by hand.
+     */
+    private ApiUserCustomerImportResponse importKoboExport(XSSFWorkbook workbook,
+                                                           Long companyId,
+                                                           CustomUserDetails authUser,
+                                                           Language language) throws ApiException {
+
+        List<ApiProductType> companyProductTypes = readCompanyProductTypes(companyId, language);
+        if (companyProductTypes.isEmpty()) {
+            throw new ApiException(ApiStatus.ERROR,
+                    "Company has no product types configured. Please add a value chain to the company first.");
+        }
+        ApiProductType firstProductType = companyProductTypes.get(0);
+
+        KoboExportReader.KoboExport export = KoboExportReader.read(workbook);
+
+        if (!export.getMissingConcepts().isEmpty()) {
+            throw new ApiException(ApiStatus.INVALID_REQUEST, String.format(
+                    "This looks like a KoboToolbox export, but no column could be matched to: %s. "
+                            + "Rename the matching question(s) in the export, or add the wording to "
+                            + "geo/kobo-header-synonyms.csv. Columns found: %s",
+                    export.getMissingConcepts(), export.getHeaders()));
+        }
+
+        ApiUserCustomerImportResponse response = new ApiUserCustomerImportResponse();
+        List<ApiUserCustomer> farmers = new ArrayList<>();
+
+        for (KoboExportReader.KoboFarmer koboFarmer : export.getFarmers()) {
+
+            Country country = getCountryByNameOrCode(koboFarmer.get(KoboExportReader.Concept.COUNTRY));
+            Gender gender = toGender(koboFarmer.get(KoboExportReader.Concept.GENDER));
+
+            if (country == null || gender == null) {
+                ApiUserCustomerImportRowValidationError rowValidation =
+                        new ApiUserCustomerImportRowValidationError(koboFarmer.getRowNum());
+                rowValidation.getColumnValidationErrors().add(new ApiUserCustomerImportColumnValidationError(
+                        "row " + (koboFarmer.getRowNum() + 1),
+                        UserCustomerImportCellErrorType.INVALID_VALUE));
+                response.getValidationErrors().add(rowValidation);
+                continue;
+            }
+
+            ApiUserCustomer apiUserCustomer = new ApiUserCustomer();
+            apiUserCustomer.setCompanyId(companyId);
+            apiUserCustomer.setType(UserCustomerType.FARMER);
+            apiUserCustomer.setProductTypes(List.of(firstProductType));
+
+            apiUserCustomer.setFarmerCompanyInternalId(koboFarmer.get(KoboExportReader.Concept.INTERNAL_ID));
+            apiUserCustomer.setSurname(koboFarmer.get(KoboExportReader.Concept.LAST_NAME));
+            apiUserCustomer.setName(koboFarmer.get(KoboExportReader.Concept.FIRST_NAME));
+            apiUserCustomer.setGender(gender);
+            apiUserCustomer.setPhone(koboFarmer.get(KoboExportReader.Concept.PHONE));
+            apiUserCustomer.setEmail(koboFarmer.get(KoboExportReader.Concept.EMAIL));
+            apiUserCustomer.setHasSmartphone(toBoolean(koboFarmer.get(KoboExportReader.Concept.SMARTPHONE)));
+
+            apiUserCustomer.setLocation(new ApiUserCustomerLocation());
+            apiUserCustomer.getLocation().setAddress(new ApiAddress());
+            apiUserCustomer.getLocation().getAddress().setCity(koboFarmer.get(KoboExportReader.Concept.CITY));
+            apiUserCustomer.getLocation().getAddress().setState(koboFarmer.get(KoboExportReader.Concept.STATE));
+            apiUserCustomer.getLocation().getAddress().setCountry(CommonApiTools.toApiCountry(country));
+
+            apiUserCustomer.setFarm(new ApiFarmInformation());
+            apiUserCustomer.getFarm().setFarmPlantInformationList(new ArrayList<>());
+            apiUserCustomer.getFarm().setOrganic(false);
+
+            apiUserCustomer.setPlots(koboPlots(koboFarmer, firstProductType.getId()));
+            nameFarmerPlots(apiUserCustomer);
+
+            farmers.add(apiUserCustomer);
+        }
+
+        persistFarmers(farmers, companyId, authUser, language, response);
 
         return response;
+    }
+
+    /** Converts the plots of one Kobo submission, preferring the surveyed size over the computed area. */
+    private List<ApiPlot> koboPlots(KoboExportReader.KoboFarmer koboFarmer, Long productTypeId) {
+
+        List<ApiPlot> plots = new ArrayList<>();
+
+        for (KoboExportReader.KoboPlot koboPlot : koboFarmer.getPlots()) {
+            List<ApiPlot> built = buildPlots(koboPlot.getGeoData(), null, productTypeId);
+            for (ApiPlot plot : built) {
+                if (koboPlot.getSize() != null && koboPlot.getSize() > 0) {
+                    plot.setSize(koboPlot.getSize());
+                    plot.setUnit("ha");
+                }
+                plot.setNumberOfPlants(koboPlot.getNumberOfPlants());
+            }
+            plots.addAll(built);
+        }
+
+        return plots;
+    }
+
+    private Country getCountryByNameOrCode(String value) {
+
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String trimmed = value.trim();
+
+        Country byCode = getCountryByCode(trimmed);
+        if (byCode != null) {
+            return byCode;
+        }
+
+        // Exports written with "labels" rather than "values" carry the country name, not its code.
+        Country country = Torpedo.from(Country.class);
+        Torpedo.where(country.getName()).eq(trimmed);
+        List<Country> countries = Torpedo.select(country).list(em);
+        return countries.size() == 1 ? countries.get(0) : null;
+    }
+
+    /** Accepts the gender wordings the supported form languages produce. */
+    private Gender toGender(String value) {
+
+        if (value == null) {
+            return null;
+        }
+        return switch (value.trim().toLowerCase(Locale.ROOT)) {
+            case "m", "male", "masculin", "homme", "hombre", "masculino" -> Gender.MALE;
+            case "f", "female", "feminin", "féminin", "femme", "mujer", "femenino" -> Gender.FEMALE;
+            case "n/a", "na" -> Gender.N_A;
+            case "diverse", "divers", "diverso" -> Gender.DIVERSE;
+            default -> null;
+        };
+    }
+
+    /** Accepts the yes/no wordings the supported form languages produce. */
+    private Boolean toBoolean(String value) {
+
+        if (value == null) {
+            return null;
+        }
+        return switch (value.trim().toLowerCase(Locale.ROOT)) {
+            case "y", "yes", "oui", "si", "sí", "true", "1" -> Boolean.TRUE;
+            case "n", "no", "non", "false", "0" -> Boolean.FALSE;
+            default -> null;
+        };
     }
 
     /**
@@ -318,7 +525,9 @@ public class UserCustomerImportService extends BaseService {
         if (row == null) {
             return true;
         }
-        for (int i = 0; i < 33; i++) {
+        // Every column counts, geo data included: a row that carries only a further plot for the
+        // farmer above is real data, and stopping at it would silently discard the rest of the file.
+        for (int i = 0; i <= LAST_COLUMN; i++) {
             if (!emptyCell(row.getCell(i))) {
                 return false;
             }
@@ -525,21 +734,56 @@ public class UserCustomerImportService extends BaseService {
             rowValidation.getColumnValidationErrors().add(new ApiUserCustomerImportColumnValidationError(getCellAddress(row.getCell(32)), UserCustomerImportCellErrorType.INCORRECT_TYPE));
         }
 
-        // Geo Data - optional, but if present it must be a well-formed, in-range POLYGON/POINT
-        Cell geoCell = row.getCell(33);
+        validateGeoCells(row, rowValidation);
+
+        return rowValidation;
+    }
+
+    /**
+     * Validates the Geo Data and GeoID cells. Both are optional; when present, Geo Data must parse
+     * as one of the formats {@link GeoDataParser} supports and the GeoID must look like a GeoID.
+     */
+    private void validateGeoCells(Row row, ApiUserCustomerImportRowValidationError rowValidation) {
+
+        Cell geoCell = row.getCell(GEO_DATA_COLUMN);
         if (!emptyCell(geoCell)) {
             if (invalidCell(geoCell, List.of(CellType.STRING))) {
                 rowValidation.getColumnValidationErrors().add(new ApiUserCustomerImportColumnValidationError(getCellAddress(geoCell), UserCustomerImportCellErrorType.INCORRECT_TYPE));
             } else {
                 try {
-                    parseGeoDataCell(geoCell.getStringCellValue().trim());
+                    GeoDataParser.parse(geoCell.getStringCellValue().trim(), getString(row.getCell(15)));
                 } catch (IllegalArgumentException e) {
                     rowValidation.getColumnValidationErrors().add(new ApiUserCustomerImportColumnValidationError(getCellAddress(geoCell), UserCustomerImportCellErrorType.INVALID_GEODATA));
                 }
             }
         }
 
-        return rowValidation;
+        Cell geoIdCell = row.getCell(GEO_ID_COLUMN);
+        if (!emptyCell(geoIdCell)) {
+            if (invalidCell(geoIdCell, List.of(CellType.STRING))) {
+                rowValidation.getColumnValidationErrors().add(new ApiUserCustomerImportColumnValidationError(getCellAddress(geoIdCell), UserCustomerImportCellErrorType.INCORRECT_TYPE));
+            } else if (!FaoGeoIdClientService.isGeoIdFormat(geoIdCell.getStringCellValue().trim())) {
+                rowValidation.getColumnValidationErrors().add(new ApiUserCustomerImportColumnValidationError(getCellAddress(geoIdCell), UserCustomerImportCellErrorType.INVALID_GEODATA));
+            }
+        }
+    }
+
+    /**
+     * A row carrying nothing but geo data: an extra plot for the farmer on the row above. Files
+     * exported from a form with a repeat group flatten multi-plot farmers exactly this way, leaving
+     * the farmer columns blank on the continuation rows.
+     */
+    private boolean geoOnlyRow(Row row) {
+
+        if (emptyCell(row.getCell(GEO_DATA_COLUMN)) && emptyCell(row.getCell(GEO_ID_COLUMN))) {
+            return false;
+        }
+        for (int i = 0; i < GEO_DATA_COLUMN; i++) {
+            if (!emptyCell(row.getCell(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private boolean invalidCell(Cell cell, List<CellType> cellTypeList) {
@@ -620,166 +864,190 @@ public class UserCustomerImportService extends BaseService {
     }
 
 
-    enum GeoDataType {
-        POLYGON,
-        POINT
-    }
-
-    /** Result of parsing a Geo Data cell: the geometry type and its [latitude, longitude] vertices. */
-    static final class ParsedGeoData {
-
-        final GeoDataType type;
-        final List<double[]> points;
-
-        ParsedGeoData(GeoDataType type, List<double[]> points) {
-            this.type = type;
-            this.points = points;
-        }
-    }
-
-    private static final Pattern GEODATA_PAIR = Pattern.compile("-?\\d+(?:\\.\\d+)?\\s+-?\\d+(?:\\.\\d+)?");
-
-    private static final Pattern GEODATA_POLYGON_FORMAT = Pattern.compile(
-            "^POLYGON\\s*\\(\\(\\s*" + GEODATA_PAIR + "(?:\\s*,\\s*" + GEODATA_PAIR + ")*\\s*\\)\\)$",
-            Pattern.CASE_INSENSITIVE);
-
-    private static final Pattern GEODATA_POINT_FORMAT = Pattern.compile(
-            "^POINT\\s*\\(\\s*" + GEODATA_PAIR + "\\s*\\)$",
-            Pattern.CASE_INSENSITIVE);
-
     /**
-     * Parses a Geo Data cell value - either {@code POLYGON((lat1 lon1, lat2 lon2, ...))} or
-     * {@code POINT(lat lon)}, matching the format documented in the import template - validating
-     * the shape, the latitude/longitude ranges, and (for polygons) that there are at least 3
-     * distinct vertices.
+     * Builds the plots for one spreadsheet row from its Geo Data cell, its GeoID cell, or both.
      *
-     * @return the parsed geometry, or {@code null} if {@code raw} is blank (geodata is optional)
-     * @throws IllegalArgumentException if {@code raw} is non-blank but not a valid geodata value
+     * <p>When a GeoID is present it wins: it is the registry's immutable handle for the boundary,
+     * so its geometry is authoritative and interoperable. If it cannot be resolved - unknown id,
+     * registry unreachable, or resolution disabled - the row falls back to whatever geometry the
+     * Geo Data cell carried, so a registry outage never costs an import. Either way the GeoID
+     * itself is kept on the plot.</p>
      */
-    ParsedGeoData parseGeoDataCell(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return null;
-        }
+    private List<ApiPlot> createUserGeoData(Row row, Long productTypeId, Map<String, List<ApiPlot>> geoIdCache) {
 
-        String trimmed = raw.trim();
-        GeoDataType type;
-        String coordinatesStr;
+        String countryCode = getString(row.getCell(15));
+        String geoId = emptyCell(row.getCell(GEO_ID_COLUMN)) ? null : row.getCell(GEO_ID_COLUMN).getStringCellValue().trim();
+        String geoData = emptyCell(row.getCell(GEO_DATA_COLUMN)) ? null : row.getCell(GEO_DATA_COLUMN).getStringCellValue().trim();
 
-        if (GEODATA_POLYGON_FORMAT.matcher(trimmed).matches()) {
-            type = GeoDataType.POLYGON;
-            coordinatesStr = trimmed.replaceAll("(?i)^POLYGON\\s*\\(\\((.*)\\)\\)$", "$1");
-        } else if (GEODATA_POINT_FORMAT.matcher(trimmed).matches()) {
-            type = GeoDataType.POINT;
-            coordinatesStr = trimmed.replaceAll("(?i)^POINT\\s*\\((.*)\\)$", "$1");
-        } else {
-            throw new IllegalArgumentException("Unrecognized geodata format: " + trimmed);
-        }
-
-        List<double[]> points = new ArrayList<>();
-        List<double[]> distinctPoints = new ArrayList<>();
-        for (String rawPoint : coordinatesStr.split(",")) {
-            String[] tokens = rawPoint.trim().split("\\s+");
-            if (tokens.length != 2) {
-                throw new IllegalArgumentException("Expected exactly 2 numbers per point: " + rawPoint);
-            }
-
-            double lat = Double.parseDouble(tokens[0]);
-            double lon = Double.parseDouble(tokens[1]);
-
-            if (lat < -90 || lat > 90) {
-                throw new IllegalArgumentException("Latitude out of range: " + lat);
-            }
-            if (lon < -180 || lon > 180) {
-                throw new IllegalArgumentException("Longitude out of range: " + lon);
-            }
-
-            double[] point = new double[] { lat, lon };
-            points.add(point);
-
-            boolean duplicate = false;
-            for (double[] existing : distinctPoints) {
-                if (existing[0] == lat && existing[1] == lon) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (!duplicate) {
-                distinctPoints.add(point);
-            }
-        }
-
-        if (type == GeoDataType.POINT && points.size() != 1) {
-            throw new IllegalArgumentException("POINT must have exactly one coordinate pair");
-        }
-        if (type == GeoDataType.POLYGON && distinctPoints.size() < 3) {
-            throw new IllegalArgumentException("POLYGON must have at least 3 distinct vertices");
-        }
-
-        return new ParsedGeoData(type, points);
-    }
-
-    private List<ApiPlot> createUserGeoData(String cellGeodata, Long productTypeId) {
         List<ApiPlot> plots = new ArrayList<>();
 
-        ParsedGeoData parsed;
-        try {
-            parsed = parseGeoDataCell(cellGeodata);
-        } catch (IllegalArgumentException e) {
-            // validateRow() already rejects malformed geodata cells before a row is accepted for
-            // import, so this should never trigger - guard kept only against an internal bug.
-            logger.error("Unexpected invalid geodata reached createUserGeoData: " + cellGeodata, e);
-            return plots;
+        if (geoId != null && !geoId.isBlank()) {
+            for (ApiPlot resolved : resolveGeoId(geoId, productTypeId, geoIdCache)) {
+                plots.add(copyPlot(resolved));
+            }
+            if (!plots.isEmpty()) {
+                return plots;
+            }
+            logger.warn("GeoID {} could not be resolved; falling back to the Geo Data cell", geoId);
         }
 
-        if (parsed == null) {
-            return plots;
+        plots.addAll(buildPlots(geoData, countryCode, productTypeId));
+
+        // Keep the identifier even when its geometry could not be fetched, so the plot stays linked
+        // to the registry entry and can be refreshed later.
+        if (geoId != null && !geoId.isBlank()) {
+            plots.forEach(plot -> plot.setGeoId(geoId));
+        }
+
+        return plots;
+    }
+
+    /** Resolves a GeoID to plots, at most once per distinct identifier per imported file. */
+    private List<ApiPlot> resolveGeoId(String geoId, Long productTypeId, Map<String, List<ApiPlot>> geoIdCache) {
+
+        return geoIdCache.computeIfAbsent(geoId, id -> {
+
+            if (faoGeoIdClientService == null) {
+                return List.of();
+            }
+
+            String geoJson = faoGeoIdClientService.resolveGeoJson(id);
+            if (geoJson == null || geoJson.isBlank()) {
+                return List.of();
+            }
+
+            try {
+                List<ApiPlot> resolved = buildPlots(geoJson, null, productTypeId);
+                resolved.forEach(plot -> plot.setGeoId(id));
+                return resolved;
+            } catch (IllegalArgumentException e) {
+                logger.warn("GeoID {} resolved to geometry that could not be read: {}", id, e.getMessage());
+                return List.of();
+            }
+        });
+    }
+
+    /**
+     * Parses a geo data value in any supported format into plots. Row validation has already
+     * rejected malformed values, so a failure here means an internal inconsistency rather than bad
+     * user input, and is logged instead of thrown.
+     */
+    private List<ApiPlot> buildPlots(String geoData, String countryCode, Long productTypeId) {
+
+        List<GeoDataParser.ParsedPlot> parsedPlots;
+        try {
+            parsedPlots = GeoDataParser.parse(geoData, countryCode);
+        } catch (IllegalArgumentException e) {
+            logger.error("Unexpected invalid geodata reached createUserGeoData: " + geoData, e);
+            return new ArrayList<>();
         }
 
         ApiProductType productType = new ApiProductType();
         productType.setId(productTypeId);
 
-        if (parsed.type == GeoDataType.POLYGON) {
-            List<Point> polygonPoints = parsed.points.stream()
-                    .map(p -> Point.fromLngLat(p[1], p[0]))
-                    .collect(Collectors.toList());
+        List<ApiPlot> plots = new ArrayList<>();
 
-            Polygon polygon = Polygon.fromLngLats(Collections.singletonList(polygonPoints));
-            Feature feature = Feature.fromGeometry(polygon);
+        for (GeoDataParser.ParsedPlot parsed : parsedPlots) {
 
             ApiPlot plot = new ApiPlot();
-            plot.setPlotName("Plot 1");
+            plot.setPlotName(parsed.getLabel());
+            plot.setCrop(productType);
 
-            double areaM2 = TurfMeasurement.area(feature);
-            double areaHa = Math.floor((areaM2 / 1000) * 100) / 100.0;
-            plot.setSize(areaHa);
-            plot.setUnit("ha");
-
-            plot.setCoordinates(parsed.points.stream().map(p -> {
-                ApiPlotCoordinate coord = new ApiPlotCoordinate();
-                coord.setLatitude(p[0]);
-                coord.setLongitude(p[1]);
-                return coord;
+            plot.setCoordinates(parsed.getPoints().stream().map(point -> {
+                ApiPlotCoordinate coordinate = new ApiPlotCoordinate();
+                coordinate.setLatitude(point[0]);
+                coordinate.setLongitude(point[1]);
+                return coordinate;
             }).collect(Collectors.toList()));
 
-            plot.setCrop(productType);
-            plots.add(plot);
+            if (parsed.getType() == GeoDataParser.GeoDataType.POLYGON) {
+                plot.setSize(areaInHectares(parsed.getPoints()));
+                plot.setUnit("ha");
+            }
 
-        } else {
-            double[] point = parsed.points.get(0);
-
-            ApiPlot plot = new ApiPlot();
-            plot.setPlotName("Point 1");
-
-            ApiPlotCoordinate coord = new ApiPlotCoordinate();
-            coord.setLatitude(point[0]);
-            coord.setLongitude(point[1]);
-            plot.setCoordinates(Collections.singletonList(coord));
-
-            plot.setCrop(productType);
             plots.add(plot);
         }
 
         return plots;
+    }
+
+    /** Area of a plot boundary in hectares, rounded down to two decimals. */
+    private double areaInHectares(List<double[]> latLonPoints) {
+
+        List<Point> ring = latLonPoints.stream()
+                .map(point -> Point.fromLngLat(point[1], point[0]))
+                .collect(Collectors.toCollection(ArrayList::new));
+
+        // Turf measures a closed ring; a hand-written boundary is often left open.
+        Point first = ring.get(0);
+        Point last = ring.get(ring.size() - 1);
+        if (first.latitude() != last.latitude() || first.longitude() != last.longitude()) {
+            ring.add(first);
+        }
+
+        Polygon polygon = Polygon.fromLngLats(Collections.singletonList(ring));
+        double areaM2 = TurfMeasurement.area(Feature.fromGeometry(polygon));
+
+        // One hectare is 10 000 m².
+        return Math.floor((areaM2 / 10000) * 100) / 100.0;
+    }
+
+    /**
+     * Gives every plot of a farmer a distinct name, keeping any label the source provided (for
+     * example the {@code P1} / {@code P3} labels of a multi-plot cell) and numbering the rest.
+     */
+    private void nameFarmerPlots(ApiUserCustomer farmer) {
+
+        if (CollectionUtils.isEmpty(farmer.getPlots())) {
+            return;
+        }
+
+        int index = 0;
+        for (ApiPlot plot : farmer.getPlots()) {
+            index++;
+            String label = plot.getPlotName();
+            // Plots named by an earlier pass keep their name; the counter still advances so the
+            // names stay distinct as more plots are appended to this farmer.
+            if (label != null && label.startsWith(PLOT_NAME_PREFIX)) {
+                continue;
+            }
+            plot.setPlotName(PLOT_NAME_PREFIX + (label == null || label.isBlank() ? String.valueOf(index) : label.trim()));
+        }
+    }
+
+    /** Appends plots to a farmer, keeping every plot of that farmer distinctly named. */
+    private void addPlotsToFarmer(ApiUserCustomer farmer, List<ApiPlot> newPlots) {
+
+        if (newPlots.isEmpty()) {
+            return;
+        }
+        if (farmer.getPlots() == null) {
+            farmer.setPlots(new ArrayList<>());
+        }
+        farmer.getPlots().addAll(newPlots);
+        nameFarmerPlots(farmer);
+    }
+
+    /** Shallow copy of a cached plot, so rows sharing a GeoID do not share mutable plot objects. */
+    private ApiPlot copyPlot(ApiPlot source) {
+
+        ApiPlot copy = new ApiPlot();
+        copy.setPlotName(source.getPlotName());
+        copy.setGeoId(source.getGeoId());
+        copy.setSize(source.getSize());
+        copy.setUnit(source.getUnit());
+        copy.setCrop(source.getCrop());
+
+        if (source.getCoordinates() != null) {
+            copy.setCoordinates(source.getCoordinates().stream().map(coordinate -> {
+                ApiPlotCoordinate copiedCoordinate = new ApiPlotCoordinate();
+                copiedCoordinate.setLatitude(coordinate.getLatitude());
+                copiedCoordinate.setLongitude(coordinate.getLongitude());
+                return copiedCoordinate;
+            }).collect(Collectors.toList()));
+        }
+
+        return copy;
     }
 
 }

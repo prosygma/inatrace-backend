@@ -145,3 +145,9 @@ beyco.integration.url =
 INATrace.agstack.apiKey =
 INATrace.agstack.clientSecret =
 INATrace.agstack.baseURL =
+
+#FAO GeoID registry (read-only: resolves a GeoID to its GeoJSON boundary during farmer import).
+#The public resolver needs no credentials. Set enabled=false to skip the lookup entirely.
+INATrace.geoid.baseURL = https://data.apps.fao.org/geoid
+INATrace.geoid.enabled = true
+INATrace.geoid.timeoutSeconds = 15

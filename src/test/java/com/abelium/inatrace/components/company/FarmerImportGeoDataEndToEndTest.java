@@ -91,6 +91,7 @@ class FarmerImportGeoDataEndToEndTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private Long countryId;
+    private Long cameroonCountryId;
     private Long userId;
     private Long companyId;
     private Long productTypeId;
@@ -107,6 +108,20 @@ class FarmerImportGeoDataEndToEndTest {
             country.setCode("ZZ");
             country.setName("Geodata E2E Test Country " + runId);
             em.persist(country);
+
+            // The real collection files declare Cameroon, by ISO code in the template and by name
+            // in the Kobo export. Seeded here because this database's Country table is empty.
+            List<Country> existingCameroon = em.createQuery(
+                            "SELECT c FROM Country c WHERE c.code = 'CM'", Country.class)
+                    .getResultList();
+            if (existingCameroon.isEmpty()) {
+                Country cameroon = new Country();
+                cameroon.setCode("CM");
+                cameroon.setName("Cameroon");
+                em.persist(cameroon);
+                em.flush();
+                cameroonCountryId = cameroon.getId();
+            }
 
             User user = new User();
             user.setEmail(runId + "@example.test");
@@ -164,11 +179,13 @@ class FarmerImportGeoDataEndToEndTest {
     void cleanup() {
         new TransactionTemplate(txManager).executeWithoutResult(status -> {
             // Remove any farmers the import created (cascades Plot/PlotCoordinate/etc.), plus
-            // their UserCustomerLocation, which isn't cascaded from UserCustomer.
+            // their UserCustomerLocation, which isn't cascaded from UserCustomer. Scoped by the
+            // throwaway company rather than by internal id, because real collection files leave the
+            // company-internal id column empty.
             List<UserCustomer> farmers = em.createQuery(
-                            "SELECT uc FROM UserCustomer uc WHERE uc.farmerCompanyInternalId LIKE :prefix",
+                            "SELECT uc FROM UserCustomer uc WHERE uc.company.id = :companyId",
                             UserCustomer.class)
-                    .setParameter("prefix", runId + "%")
+                    .setParameter("companyId", companyId)
                     .getResultList();
             for (UserCustomer farmer : farmers) {
                 var location = farmer.getUserCustomerLocation();
@@ -189,6 +206,7 @@ class FarmerImportGeoDataEndToEndTest {
             deleteIfPresent(Company.class, companyId);
             deleteIfPresent(ProductType.class, productTypeId);
             deleteIfPresent(Country.class, countryId);
+            deleteIfPresent(Country.class, cameroonCountryId);
             deleteIfPresent(User.class, userId);
         });
 
@@ -272,6 +290,135 @@ class FarmerImportGeoDataEndToEndTest {
                 .setParameter("id", internalId)
                 .getSingleResult();
         assertEquals(0L, farmerCount, "no farmer should have been persisted for a rejected row");
+    }
+
+    @Test
+    void koboGeoshape_isAcceptedAndPersisted() throws Exception {
+        String internalId = runId + "-geoshape";
+        // Verbatim from a UCCAO collection: "lat lon altitude accuracy", points separated by ";"
+        byte[] xlsx = buildWorkbook(internalId,
+                "5.1717367 10.2352433 1267.1 1.45;5.1718067 10.235235 1267.8 1.3;"
+                        + "5.1719302 10.2352027 1267.0 1.3;5.1717367 10.2352433 1267.1 1.45");
+
+        JsonNode response = callImportEndpoint(uploadDocument(xlsx));
+
+        assertEquals(1, response.get("successful").asInt(), "expected exactly 1 farmer imported: " + response);
+        assertTrue(response.get("validationErrors").isEmpty(), "expected no validation errors: " + response);
+
+        new TransactionTemplate(txManager).executeWithoutResult(status -> {
+            UserCustomer farmer = em.createQuery(
+                            "SELECT uc FROM UserCustomer uc WHERE uc.farmerCompanyInternalId = :id", UserCustomer.class)
+                    .setParameter("id", internalId)
+                    .getSingleResult();
+
+            assertEquals(1, farmer.getPlots().size());
+            var plot = farmer.getPlots().iterator().next();
+            // 3 distinct vertices (the 4th repeats the first) -> stored as a closed ring
+            assertEquals(4, plot.getCoordinates().size());
+
+            List<PlotCoordinate> coordinates = plot.getCoordinates().stream()
+                    .sorted((a, b) -> a.getCoordinateOrder().compareTo(b.getCoordinateOrder()))
+                    .toList();
+            assertEquals(5.1717367, coordinates.get(0).getLatitude(), "altitude and accuracy are discarded");
+            assertEquals(10.2352433, coordinates.get(0).getLongitude());
+        });
+    }
+
+    /**
+     * The real, hand-filled UCCAO template, uploaded byte-for-byte as the user has it: no internal
+     * ids anywhere, ODK geoshape in every geo cell, and a trailing row that carries nothing but
+     * three more plots written as {@code P1(...)P2 (...)P3(...)}.
+     *
+     * <p>Every plot of the collection survives the hand copy, but three of them ended up against
+     * the wrong farmer - which the importer cannot detect and faithfully reproduces. That
+     * misattribution is what {@link #realKoboExport_attributesEveryPlotToTheRightFarmer()} avoids.</p>
+     */
+    @Test
+    void realFilledTemplate_importsEveryFarmerAndEveryPlot() throws Exception {
+        byte[] xlsx = java.nio.file.Files.readAllBytes(
+                Paths.get("src/test/resources/farmer-import/UCCAO_filled_template.xlsx"));
+
+        JsonNode response = callImportEndpoint(uploadDocument(xlsx));
+
+        assertTrue(response.get("validationErrors").isEmpty(), "expected no validation errors: " + response);
+        // 7 named rows, each its own farmer despite every internal-id cell being empty.
+        assertEquals(7, response.get("successful").asInt(), "farmers imported: " + response);
+
+        new TransactionTemplate(txManager).executeWithoutResult(status -> {
+            List<UserCustomer> farmers = farmersOfTestCompany();
+
+            assertEquals(7, farmers.size(), "one farmer per named row, not one farmer for the whole file");
+            assertEquals(10, totalPlots(farmers),
+                    "7 rows with one plot each, plus the 3 plots of the trailing geo-only row: "
+                            + plotDistribution(farmers));
+
+            UserCustomer tsomelou = farmer(farmers, "Bam.tsomelou");
+            // 1 of its own + the 3 of the geo-only row that follows it.
+            assertEquals(4, tsomelou.getPlots().size(), "the P1(...)P2 (...)P3(...) row attaches to the farmer above");
+            assertEquals(4, tsomelou.getPlots().stream().map(p -> p.getPlotName()).distinct().count(),
+                    "plots of one farmer get distinct names");
+
+            Double size = farmer(farmers, "Gadji épouse").getPlots().iterator().next().getSize();
+            // ~6685 m². In hectares that is 0.66 - the pre-fix code stored 6.68.
+            assertTrue(size > 0.6 && size < 0.7, "plot size should be in hectares, was " + size);
+        });
+    }
+
+    /**
+     * The same collection read straight from its KoboToolbox export, with no re-keying at all.
+     *
+     * <p>The export links each plot to its submission, so the two plots that the hand copy filed
+     * against the wrong farmer land where they belong.</p>
+     */
+    @Test
+    void realKoboExport_attributesEveryPlotToTheRightFarmer() throws Exception {
+        byte[] xlsx = java.nio.file.Files.readAllBytes(
+                Paths.get("src/test/resources/farmer-import/UCCAO_kobo_export.xlsx"));
+
+        JsonNode response = callImportEndpoint(uploadDocument(xlsx));
+
+        assertTrue(response.get("validationErrors").isEmpty(), "expected no validation errors: " + response);
+        assertEquals(7, response.get("successful").asInt(), "farmers imported: " + response);
+
+        new TransactionTemplate(txManager).executeWithoutResult(status -> {
+            List<UserCustomer> farmers = farmersOfTestCompany();
+
+            assertEquals(7, farmers.size());
+            assertEquals(10, totalPlots(farmers), "every plot of every repeat group: " + plotDistribution(farmers));
+
+            // The hand-copied template gives these 1 / 1 / 4; the export gives the true 2 / 1 / 3.
+            assertEquals(2, farmer(farmers, "Bam. Keubou").getPlots().size());
+            assertEquals(1, farmer(farmers, "Bam. Fopa").getPlots().size());
+            assertEquals(3, farmer(farmers, "Bam.tsomelou").getPlots().size());
+
+            assertEquals("Cameroon",
+                    farmer(farmers, "Gadji épouse").getUserCustomerLocation().getAddress().getCountry().getName(),
+                    "the export names the country instead of using its ISO code");
+        });
+    }
+
+    private List<UserCustomer> farmersOfTestCompany() {
+        return em.createQuery(
+                        "SELECT uc FROM UserCustomer uc WHERE uc.company.id = :companyId", UserCustomer.class)
+                .setParameter("companyId", companyId)
+                .getResultList();
+    }
+
+    private static int totalPlots(List<UserCustomer> farmers) {
+        return farmers.stream().mapToInt(f -> f.getPlots().size()).sum();
+    }
+
+    private static String plotDistribution(List<UserCustomer> farmers) {
+        return farmers.stream()
+                .map(f -> f.getSurname() + "=" + f.getPlots().size())
+                .collect(java.util.stream.Collectors.joining(", "));
+    }
+
+    private static UserCustomer farmer(List<UserCustomer> farmers, String surname) {
+        return farmers.stream()
+                .filter(f -> surname.equals(f.getSurname() == null ? null : f.getSurname().trim()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no farmer " + surname + " in " + plotDistribution(farmers)));
     }
 
     /** Builds a single-data-row copy of the real shipped template, matching a realistic full farmer entry. */

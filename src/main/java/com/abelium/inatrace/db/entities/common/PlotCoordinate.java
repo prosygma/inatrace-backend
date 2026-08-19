@@ -5,8 +5,6 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.ManyToOne;
 
-import java.util.Objects;
-
 /**
  * Singe coordinate of a plot.
  *
@@ -58,19 +56,5 @@ public class PlotCoordinate extends BaseEntity {
     public void setCoordinateOrder(Integer coordinateOrder) {
         this.coordinateOrder = coordinateOrder;
     }
-
-    // pour gerer le pb de ddesordre des coordonnées
-//    @Override
-//    public boolean equals(Object o) {
-//        if (this == o) return true;
-//        if (!(o instanceof PlotCoordinate thatz)) return false;
-//        return Objects.equals(getLatitude(), thatz.getLatitude()) &&
-//                Objects.equals(getLongitude(), thatz.getLongitude());
-//    }
-//
-//    @Override
-//    public int hashCode() {
-//        return Objects.hash(getLatitude(), getLongitude());
-//    }
 
 }

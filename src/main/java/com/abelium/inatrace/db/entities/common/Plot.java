@@ -52,7 +52,7 @@ public class Plot extends BaseEntity {
     private Long collectorId;
 
 
-    @OneToMany(mappedBy = "plot", cascade = CascadeType.ALL,  fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "plot", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @OrderBy("coordinateOrder ASC")
 	private Set<PlotCoordinate> coordinates = new LinkedHashSet<>(); // preservera lordre des coordonées
 
