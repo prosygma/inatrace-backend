@@ -160,3 +160,9 @@ src/main/resources/application.properties
 logs/
 Upload/
 src/main/resources/db/migrations/V2026_07_07_12_00__Backfill_PlotCoordinate_order.sql
+
+# Never commit a live configuration file: it carries database, mail and JWT
+# credentials. Copy src/main/resources/application.properties.template instead.
+/application.properties
+/application_old.properties_old
+*.properties_old

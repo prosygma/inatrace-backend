@@ -11,18 +11,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Covers every geo data format the farmer import accepts. The geoshape and multi-plot cases use
- * real values taken from a UCCAO KoboToolbox collection, which is the data that motivated
+ * anonymised values from a UCCAO KoboToolbox collection, which is the data that motivated
  * multi-format support in the first place.
  */
 class GeoDataParserTest {
 
-	/** First plot of the UCCAO template, exactly as the collection tool wrote it (abridged). */
+	/** First plot of the UCCAO template in the collection tool's own format (abridged).
+	 *  Anonymised: the polygon is translated, its shape and precision are untouched. */
 	private static final String REAL_GEOSHAPE =
-			"5.1717367 10.2352433 1267.1000000000001 1.45;"
-					+ "5.1718067 10.235235 1267.8 1.3;"
-					+ "5.1719302 10.2352027 1267.0 1.3;"
-					+ "5.1720846 10.2351663 1262.1000000000001 1.5;"
-					+ "5.1717367 10.2352433 1267.1000000000001 1.45";
+			"5.2217367 10.2852433 1267.1000000000001 1.45;"
+					+ "5.2218067 10.285235 1267.8 1.3;"
+					+ "5.2219302 10.2852027 1267.0 1.3;"
+					+ "5.2220846 10.2851663 1262.1000000000001 1.5;"
+					+ "5.2217367 10.2852433 1267.1000000000001 1.45";
 
 	// ------------------------------------------------------------------ absent
 
@@ -125,28 +126,28 @@ class GeoDataParserTest {
 	void standardLonLatWkt_isDetectedFromTheDeclaredCountry() {
 		// QGIS/PostGIS order: longitude first. Read as lat/lon this plot would sit west of Cameroon.
 		List<GeoDataParser.ParsedPlot> plots = GeoDataParser.parse(
-				"POLYGON((10.2352433 5.1717367, 10.235235 5.1718067, 10.2352027 5.1719302))", "CM");
+				"POLYGON((10.2852433 5.2217367, 10.285235 5.2218067, 10.2852027 5.2219302))", "CM");
 
-		assertEquals(5.1717367, plots.get(0).getPoints().get(0)[0], 1e-9, "latitude");
-		assertEquals(10.2352433, plots.get(0).getPoints().get(0)[1], 1e-9, "longitude");
+		assertEquals(5.2217367, plots.get(0).getPoints().get(0)[0], 1e-9, "latitude");
+		assertEquals(10.2852433, plots.get(0).getPoints().get(0)[1], 1e-9, "longitude");
 	}
 
 	@Test
 	void documentedLatLonWkt_isKeptWhenItFitsTheCountry() {
 		List<GeoDataParser.ParsedPlot> plots = GeoDataParser.parse(
-				"POLYGON((5.1717367 10.2352433, 5.1718067 10.235235, 5.1719302 10.2352027))", "CM");
+				"POLYGON((5.2217367 10.2852433, 5.2218067 10.285235, 5.2219302 10.2852027))", "CM");
 
-		assertEquals(5.1717367, plots.get(0).getPoints().get(0)[0], 1e-9, "latitude");
-		assertEquals(10.2352433, plots.get(0).getPoints().get(0)[1], 1e-9, "longitude");
+		assertEquals(5.2217367, plots.get(0).getPoints().get(0)[0], 1e-9, "latitude");
+		assertEquals(10.2852433, plots.get(0).getPoints().get(0)[1], 1e-9, "longitude");
 	}
 
 	@Test
 	void withoutAKnownCountry_theDocumentedLatLonOrderIsKept() {
 		// No country, so no evidence to flip on: 10.23 stays the latitude.
 		List<GeoDataParser.ParsedPlot> plots = GeoDataParser.parse(
-				"POLYGON((10.2352433 5.1717367, 10.235235 5.1718067, 10.2352027 5.1719302))", "ZZ");
+				"POLYGON((10.2852433 5.2217367, 10.285235 5.2218067, 10.2852027 5.2219302))", "ZZ");
 
-		assertEquals(10.2352433, plots.get(0).getPoints().get(0)[0], 1e-9, "latitude");
+		assertEquals(10.2852433, plots.get(0).getPoints().get(0)[0], 1e-9, "latitude");
 	}
 
 	// ------------------------------------------------------------------ ODK / Kobo geoshape
@@ -159,8 +160,8 @@ class GeoDataParserTest {
 		GeoDataParser.ParsedPlot plot = plots.get(0);
 		assertEquals(GeoDataParser.GeoDataType.POLYGON, plot.getType());
 		assertEquals(5, plot.getPoints().size(), "the closing vertex is kept");
-		assertEquals(5.1717367, plot.getPoints().get(0)[0]);
-		assertEquals(10.2352433, plot.getPoints().get(0)[1]);
+		assertEquals(5.2217367, plot.getPoints().get(0)[0]);
+		assertEquals(10.2852433, plot.getPoints().get(0)[1]);
 	}
 
 	@Test
@@ -183,12 +184,12 @@ class GeoDataParserTest {
 
 	@Test
 	void singleGeopoint_isParsedAsAPoint() {
-		List<GeoDataParser.ParsedPlot> plots = GeoDataParser.parse("5.1717367 10.2352433 1267.1 1.45", null);
+		List<GeoDataParser.ParsedPlot> plots = GeoDataParser.parse("5.2217367 10.2852433 1267.1 1.45", null);
 
 		assertEquals(1, plots.size());
 		assertEquals(GeoDataParser.GeoDataType.POINT, plots.get(0).getType());
-		assertEquals(5.1717367, plots.get(0).getPoints().get(0)[0]);
-		assertEquals(10.2352433, plots.get(0).getPoints().get(0)[1]);
+		assertEquals(5.2217367, plots.get(0).getPoints().get(0)[0]);
+		assertEquals(10.2852433, plots.get(0).getPoints().get(0)[1]);
 	}
 
 	@Test
@@ -241,13 +242,13 @@ class GeoDataParserTest {
 	void geoJsonPolygon_isParsedInLonLatOrder() {
 		List<GeoDataParser.ParsedPlot> plots = GeoDataParser.parse(
 				"{\"type\":\"Polygon\",\"coordinates\":"
-						+ "[[[10.2352433,5.1717367],[10.235235,5.1718067],[10.2352027,5.1719302],[10.2352433,5.1717367]]]}",
+						+ "[[[10.2852433,5.2217367],[10.285235,5.2218067],[10.2852027,5.2219302],[10.2852433,5.2217367]]]}",
 				null);
 
 		assertEquals(1, plots.size());
 		assertEquals(GeoDataParser.GeoDataType.POLYGON, plots.get(0).getType());
-		assertEquals(5.1717367, plots.get(0).getPoints().get(0)[0], 1e-9, "latitude");
-		assertEquals(10.2352433, plots.get(0).getPoints().get(0)[1], 1e-9, "longitude");
+		assertEquals(5.2217367, plots.get(0).getPoints().get(0)[0], 1e-9, "latitude");
+		assertEquals(10.2852433, plots.get(0).getPoints().get(0)[1], 1e-9, "longitude");
 	}
 
 	@Test

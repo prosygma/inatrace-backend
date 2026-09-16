@@ -105,7 +105,7 @@ class FarmerImportTemplateAssetTest {
 
             XSSFSheet sheet = workbook.getSheetAt(0);
             Row dataRow = sheet.createRow(5); // first data row per UserCustomerImportService.rowIndex = 5
-            dataRow.createCell(33).setCellValue("POLYGON((5.1717367 10.2352433, 5.1718067 10.235235, 5.1719302 10.2352027))");
+            dataRow.createCell(33).setCellValue("POLYGON((5.2217367 10.2852433, 5.2218067 10.285235, 5.2219302 10.2852027))");
 
             List<GeoDataParser.ParsedPlot> plots =
                     GeoDataParser.parse(dataRow.getCell(33).getStringCellValue().trim(), "CM");
@@ -113,8 +113,8 @@ class FarmerImportTemplateAssetTest {
             assertEquals(1, plots.size());
             assertEquals(GeoDataParser.GeoDataType.POLYGON, plots.get(0).getType());
             assertEquals(3, plots.get(0).getPoints().size());
-            assertEquals(5.1717367, plots.get(0).getPoints().get(0)[0]);
-            assertEquals(10.2352433, plots.get(0).getPoints().get(0)[1]);
+            assertEquals(5.2217367, plots.get(0).getPoints().get(0)[0]);
+            assertEquals(10.2852433, plots.get(0).getPoints().get(0)[1]);
         }
     }
 
@@ -125,10 +125,10 @@ class FarmerImportTemplateAssetTest {
 
             XSSFSheet sheet = workbook.getSheetAt(0);
             Row dataRow = sheet.createRow(5);
-            // Verbatim from a UCCAO collection - the format users actually paste into this column
+            // A UCCAO collection's format - what users actually paste into this column
             dataRow.createCell(33).setCellValue(
-                    "5.1717367 10.2352433 1267.1000000000001 1.45;5.1718067 10.235235 1267.8 1.3;"
-                            + "5.1719302 10.2352027 1267.0 1.3;5.1717367 10.2352433 1267.1000000000001 1.45");
+                    "5.2217367 10.2852433 1267.1000000000001 1.45;5.2218067 10.285235 1267.8 1.3;"
+                            + "5.2219302 10.2852027 1267.0 1.3;5.2217367 10.2852433 1267.1000000000001 1.45");
 
             List<GeoDataParser.ParsedPlot> plots =
                     GeoDataParser.parse(dataRow.getCell(33).getStringCellValue().trim(), "CM");

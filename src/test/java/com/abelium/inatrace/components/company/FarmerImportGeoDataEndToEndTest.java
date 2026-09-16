@@ -238,7 +238,7 @@ class FarmerImportGeoDataEndToEndTest {
     void validPolygon_isAcceptedAndPersistedWithCorrectCoordinates() throws Exception {
         String internalId = runId + "-valid";
         byte[] xlsx = buildWorkbook(internalId,
-                "POLYGON((5.1717367 10.2352433, 5.1718067 10.235235, 5.1719302 10.2352027))");
+                "POLYGON((5.2217367 10.2852433, 5.2218067 10.285235, 5.2219302 10.2852027))");
 
         Long documentId = uploadDocument(xlsx);
         JsonNode response = callImportEndpoint(documentId);
@@ -262,8 +262,8 @@ class FarmerImportGeoDataEndToEndTest {
             assertEquals(4, coordinates.size());
             assertEquals(coordinates.get(0).getLatitude(), coordinates.get(3).getLatitude());
             assertEquals(coordinates.get(0).getLongitude(), coordinates.get(3).getLongitude());
-            assertEquals(5.1717367, coordinates.get(0).getLatitude());
-            assertEquals(10.2352433, coordinates.get(0).getLongitude());
+            assertEquals(5.2217367, coordinates.get(0).getLatitude());
+            assertEquals(10.2852433, coordinates.get(0).getLongitude());
         });
     }
 
@@ -295,10 +295,10 @@ class FarmerImportGeoDataEndToEndTest {
     @Test
     void koboGeoshape_isAcceptedAndPersisted() throws Exception {
         String internalId = runId + "-geoshape";
-        // Verbatim from a UCCAO collection: "lat lon altitude accuracy", points separated by ";"
+        // A UCCAO collection's format: "lat lon altitude accuracy", points separated by ";"
         byte[] xlsx = buildWorkbook(internalId,
-                "5.1717367 10.2352433 1267.1 1.45;5.1718067 10.235235 1267.8 1.3;"
-                        + "5.1719302 10.2352027 1267.0 1.3;5.1717367 10.2352433 1267.1 1.45");
+                "5.2217367 10.2852433 1267.1 1.45;5.2218067 10.285235 1267.8 1.3;"
+                        + "5.2219302 10.2852027 1267.0 1.3;5.2217367 10.2852433 1267.1 1.45");
 
         JsonNode response = callImportEndpoint(uploadDocument(xlsx));
 
@@ -319,13 +319,14 @@ class FarmerImportGeoDataEndToEndTest {
             List<PlotCoordinate> coordinates = plot.getCoordinates().stream()
                     .sorted((a, b) -> a.getCoordinateOrder().compareTo(b.getCoordinateOrder()))
                     .toList();
-            assertEquals(5.1717367, coordinates.get(0).getLatitude(), "altitude and accuracy are discarded");
-            assertEquals(10.2352433, coordinates.get(0).getLongitude());
+            assertEquals(5.2217367, coordinates.get(0).getLatitude(), "altitude and accuracy are discarded");
+            assertEquals(10.2852433, coordinates.get(0).getLongitude());
         });
     }
 
     /**
-     * The real, hand-filled UCCAO template, uploaded byte-for-byte as the user has it: no internal
+     * The hand-filled UCCAO template, uploaded byte-for-byte as the user has it (with personal
+     * data anonymised and the plots translated): no internal
      * ids anywhere, ODK geoshape in every geo cell, and a trailing row that carries nothing but
      * three more plots written as {@code P1(...)P2 (...)P3(...)}.
      *
@@ -352,13 +353,13 @@ class FarmerImportGeoDataEndToEndTest {
                     "7 rows with one plot each, plus the 3 plots of the trailing geo-only row: "
                             + plotDistribution(farmers));
 
-            UserCustomer tsomelou = farmer(farmers, "Bam.tsomelou");
+            UserCustomer essomba = farmer(farmers, "Essomba");
             // 1 of its own + the 3 of the geo-only row that follows it.
-            assertEquals(4, tsomelou.getPlots().size(), "the P1(...)P2 (...)P3(...) row attaches to the farmer above");
-            assertEquals(4, tsomelou.getPlots().stream().map(p -> p.getPlotName()).distinct().count(),
+            assertEquals(4, essomba.getPlots().size(), "the P1(...)P2 (...)P3(...) row attaches to the farmer above");
+            assertEquals(4, essomba.getPlots().stream().map(p -> p.getPlotName()).distinct().count(),
                     "plots of one farmer get distinct names");
 
-            Double size = farmer(farmers, "Gadji épouse").getPlots().iterator().next().getSize();
+            Double size = farmer(farmers, "Clarisse").getPlots().iterator().next().getSize();
             // ~6685 m². In hectares that is 0.66 - the pre-fix code stored 6.68.
             assertTrue(size > 0.6 && size < 0.7, "plot size should be in hectares, was " + size);
         });
@@ -387,12 +388,12 @@ class FarmerImportGeoDataEndToEndTest {
             assertEquals(10, totalPlots(farmers), "every plot of every repeat group: " + plotDistribution(farmers));
 
             // The hand-copied template gives these 1 / 1 / 4; the export gives the true 2 / 1 / 3.
-            assertEquals(2, farmer(farmers, "Bam. Keubou").getPlots().size());
-            assertEquals(1, farmer(farmers, "Bam. Fopa").getPlots().size());
-            assertEquals(3, farmer(farmers, "Bam.tsomelou").getPlots().size());
+            assertEquals(2, farmer(farmers, "Kevine").getPlots().size());
+            assertEquals(1, farmer(farmers, "Wamba").getPlots().size());
+            assertEquals(3, farmer(farmers, "Essomba").getPlots().size());
 
             assertEquals("Cameroon",
-                    farmer(farmers, "Gadji épouse").getUserCustomerLocation().getAddress().getCountry().getName(),
+                    farmer(farmers, "Clarisse").getUserCustomerLocation().getAddress().getCountry().getName(),
                     "the export names the country instead of using its ISO code");
         });
     }
