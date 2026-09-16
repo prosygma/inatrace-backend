@@ -1059,13 +1059,12 @@ public class CompanyService extends BaseService {
 
 		UserCustomerLocation userCustomerLocation = new UserCustomerLocation();
 		if (apiUserCustomer.getLocation() != null) {
-            BigDecimal lat = BigDecimal.valueOf(apiUserCustomer.getLocation().getLatitude())
-                    .setScale(6, RoundingMode.HALF_UP);
-            BigDecimal lon = BigDecimal.valueOf(apiUserCustomer.getLocation().getLongitude())
-                    .setScale(6, RoundingMode.HALF_UP);
-
-			userCustomerLocation.setLatitude(lat.doubleValue());
-			userCustomerLocation.setLongitude(lon.doubleValue());
+			// A farmer may have an address and no coordinates - a spreadsheet import fills the
+			// address columns far more often than the optional latitude/longitude ones. Both
+			// the API model and the entity hold a nullable Double, so carry the null through
+			// instead of unboxing it, which used to fail the whole import with a 500.
+			userCustomerLocation.setLatitude(roundCoordinate(apiUserCustomer.getLocation().getLatitude()));
+			userCustomerLocation.setLongitude(roundCoordinate(apiUserCustomer.getLocation().getLongitude()));
 			userCustomerLocation.setPubliclyVisible(apiUserCustomer.getLocation().getPubliclyVisible());
 			if (apiUserCustomer.getLocation().getAddress() != null) {
 				userCustomerLocation.setAddress(new Address());
@@ -1195,6 +1194,17 @@ public class CompanyService extends BaseService {
 		}
 
 		return companyApiTools.toApiUserCustomer(userCustomer, user.getUserId(), language);
+	}
+
+	/**
+	 * Rounds a coordinate to the six decimal places the rest of the system stores, passing a
+	 * missing coordinate through untouched. Latitude and longitude are optional on a farmer's
+	 * address, so a null here is ordinary data, not an error.
+	 */
+	static Double roundCoordinate(Double coordinate) {
+		return coordinate == null
+				? null
+				: BigDecimal.valueOf(coordinate).setScale(6, RoundingMode.HALF_UP).doubleValue();
 	}
 
 	@Transactional
@@ -2292,18 +2302,4 @@ public class CompanyService extends BaseService {
     }
 
 
-	/**
-	 * Rounds a stored coordinate to {@link #COORDINATE_DECIMAL_PLACES} decimal places. Applied to
-	 * every coordinate before it is persisted, so that the plot GeoID - which is generated from the
-	 * persisted coordinates - matches the ring that is actually stored.
-	 *
-	 * @param value coordinate to round, may be null
-	 * @return the rounded value, or null if the input was null
-	 */
-	private static Double roundCoordinate(Double value) {
-		if (value == null) {
-			return null;
-		}
-		return BigDecimal.valueOf(value).setScale(COORDINATE_DECIMAL_PLACES, RoundingMode.HALF_UP).doubleValue();
-	}
 }
