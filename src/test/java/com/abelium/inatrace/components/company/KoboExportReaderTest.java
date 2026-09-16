@@ -14,10 +14,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Drives the real UCCAO KoboToolbox export - the file that motivated reading exports directly.
+ * Drives the UCCAO KoboToolbox export (anonymised) - the file that motivated reading exports directly.
  *
  * <p>The regression this guards is concrete: when the same collection was copied into the INATrace
- * template by hand, the plots of three farmers ended up on the wrong rows and Bam.tsomelou's second
+ * template by hand, the plots of three farmers ended up on the wrong rows and Essomba's second
  * parcel was lost. Read from the export, all 7 farmers and all 10 plots survive.</p>
  */
 class KoboExportReaderTest {
@@ -58,24 +58,24 @@ class KoboExportReaderTest {
 						f -> f.get(KoboExportReader.Concept.LAST_NAME).trim(),
 						f -> f.getPlots().size()));
 
-		assertEquals(1, plotsByFarmer.get("Gadji épouse"));
-		assertEquals(2, plotsByFarmer.get("Bam. Keubou"));
-		assertEquals(1, plotsByFarmer.get("Bam. Fopa"));
+		assertEquals(1, plotsByFarmer.get("Clarisse"));
+		assertEquals(2, plotsByFarmer.get("Kevine"));
+		assertEquals(1, plotsByFarmer.get("Wamba"));
 		// The parcel the hand-copied template lost is the third one here.
-		assertEquals(3, plotsByFarmer.get("Bam.tsomelou"));
+		assertEquals(3, plotsByFarmer.get("Essomba"));
 	}
 
 	@Test
 	void farmerFieldsAreMappedFromFrenchHeaders() throws Exception {
 		KoboExportReader.KoboFarmer first = read().getFarmers().get(0);
 
-		assertEquals("Gadji épouse", first.get(KoboExportReader.Concept.LAST_NAME));
-		assertEquals("Tchugueleu", first.get(KoboExportReader.Concept.FIRST_NAME));
-		assertEquals("Banka", first.get(KoboExportReader.Concept.CITY));
-		assertEquals("Ouest", first.get(KoboExportReader.Concept.STATE));
+		assertEquals("Clarisse", first.get(KoboExportReader.Concept.LAST_NAME));
+		assertEquals("Dongmo", first.get(KoboExportReader.Concept.FIRST_NAME));
+		assertEquals("Bangou", first.get(KoboExportReader.Concept.CITY));
+		assertEquals("Balessing", first.get(KoboExportReader.Concept.STATE));
 		assertEquals("Cameroon", first.get(KoboExportReader.Concept.COUNTRY));
 		assertEquals("Féminin", first.get(KoboExportReader.Concept.GENDER));
-		assertEquals("654787309", first.get(KoboExportReader.Concept.PHONE));
+		assertEquals("600000000", first.get(KoboExportReader.Concept.PHONE));
 		assertEquals("Oui", first.get(KoboExportReader.Concept.SMARTPHONE));
 	}
 
