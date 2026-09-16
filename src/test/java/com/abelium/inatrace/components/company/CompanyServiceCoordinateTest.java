@@ -10,6 +10,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -106,6 +107,30 @@ class CompanyServiceCoordinateTest {
 		assertEquals(2, stored.size());
 		assertArrayEquals(new double[] { 1, 1 }, stored.get(0));
 		assertArrayEquals(new double[] { 2, 2 }, stored.get(1));
+	}
+
+	// --- farmer address coordinates ------------------------------------------------------------
+
+	@Test
+	void addressCoordinate_isRoundedToSixDecimals() {
+		assertEquals(5.171737, CompanyService.roundCoordinate(5.1717367), 0.0);
+		assertEquals(10.235243, CompanyService.roundCoordinate(10.2352433), 0.0);
+		// HALF_UP, so a trailing 5 rounds away from zero.
+		assertEquals(1.000002, CompanyService.roundCoordinate(1.0000015), 0.0);
+	}
+
+	@Test
+	void addressCoordinate_survivesBeingAbsent() {
+		// A farmer may have an address and no coordinates: the import fills the address columns
+		// far more often than the optional latitude/longitude ones. Unboxing the null here used
+		// to throw and fail the entire spreadsheet import with a 500.
+		assertNull(CompanyService.roundCoordinate(null));
+	}
+
+	@Test
+	void addressCoordinate_keepsSignAndAlreadyShortValues() {
+		assertEquals(-3.5, CompanyService.roundCoordinate(-3.5), 0.0);
+		assertEquals(0.0, CompanyService.roundCoordinate(0.0), 0.0);
 	}
 
 	// --- helpers -------------------------------------------------------------------------------
