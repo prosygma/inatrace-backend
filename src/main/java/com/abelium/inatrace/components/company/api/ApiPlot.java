@@ -39,8 +39,20 @@ public class ApiPlot extends ApiBaseEntity {
 	@Schema(description = "Date of last update")
 	private Date lastUpdated;
 
-	@Schema(description = "Date of last update")
+	@Schema(description = "ID of the farmer owning the plot")
 	private Long farmerId;
+
+	@Schema(description = "First name of the farmer owning the plot (company plots list only)")
+	private String farmerName;
+
+	@Schema(description = "Last name of the farmer owning the plot (company plots list only)")
+	private String farmerSurname;
+
+	@Schema(description = "Company-internal ID of the farmer owning the plot (company plots list only)")
+	private String farmerCompanyInternalId;
+
+	@Schema(description = "Village, or city when no village is set, of the farmer owning the plot (company plots list only)")
+	private String farmerLocality;
 
     @Schema(description = "center Latitude")
     private Double centerLatitude;
@@ -133,6 +145,38 @@ public class ApiPlot extends ApiBaseEntity {
 
 	public void setFarmerId(Long farmerId) {
 		this.farmerId = farmerId;
+	}
+
+	public String getFarmerName() {
+		return farmerName;
+	}
+
+	public void setFarmerName(String farmerName) {
+		this.farmerName = farmerName;
+	}
+
+	public String getFarmerSurname() {
+		return farmerSurname;
+	}
+
+	public void setFarmerSurname(String farmerSurname) {
+		this.farmerSurname = farmerSurname;
+	}
+
+	public String getFarmerCompanyInternalId() {
+		return farmerCompanyInternalId;
+	}
+
+	public void setFarmerCompanyInternalId(String farmerCompanyInternalId) {
+		this.farmerCompanyInternalId = farmerCompanyInternalId;
+	}
+
+	public String getFarmerLocality() {
+		return farmerLocality;
+	}
+
+	public void setFarmerLocality(String farmerLocality) {
+		this.farmerLocality = farmerLocality;
 	}
 
     public Double getCenterLatitude() {

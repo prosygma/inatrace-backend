@@ -1,5 +1,7 @@
 package com.abelium.inatrace.components.company;
 
+import org.springframework.test.context.ActiveProfiles;
+import com.abelium.inatrace.support.AbstractMySqlIntegrationTest;
 import com.abelium.inatrace.components.common.TokenService;
 import com.abelium.inatrace.db.entities.codebook.ProductType;
 import com.abelium.inatrace.db.entities.common.Country;
@@ -65,7 +67,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the shared local database exactly as it found it.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class FarmerImportGeoDataEndToEndTest {
+@ActiveProfiles("test")
+class FarmerImportGeoDataEndToEndTest extends AbstractMySqlIntegrationTest {
 
     private static final String TEMPLATE_PATH =
             "src/test/resources/farmer-import/Template_list_of_farmers_other_countries_en.xlsx";
@@ -263,8 +266,8 @@ class FarmerImportGeoDataEndToEndTest {
             assertEquals(4, coordinates.size());
             assertEquals(coordinates.get(0).getLatitude(), coordinates.get(3).getLatitude());
             assertEquals(coordinates.get(0).getLongitude(), coordinates.get(3).getLongitude());
-            assertEquals(5.2217367, coordinates.get(0).getLatitude());
-            assertEquals(10.2852433, coordinates.get(0).getLongitude());
+            assertEquals(5.221737, coordinates.get(0).getLatitude());
+            assertEquals(10.285243, coordinates.get(0).getLongitude());
         });
     }
 
@@ -292,6 +295,7 @@ class FarmerImportGeoDataEndToEndTest {
             farmer.getPlots().forEach(plot -> {
                 assertNotNull(plot.getSynchronisationDate(), "plot " + plot.getId() + " has no synchronisationDate");
                 assertNotNull(plot.getCollectorId(), "plot " + plot.getId() + " has no collectorId");
+                assertNotNull(plot.getCrop(), "plot " + plot.getId() + " has no crop");
             });
         });
     }
@@ -348,8 +352,8 @@ class FarmerImportGeoDataEndToEndTest {
             List<PlotCoordinate> coordinates = plot.getCoordinates().stream()
                     .sorted((a, b) -> a.getCoordinateOrder().compareTo(b.getCoordinateOrder()))
                     .toList();
-            assertEquals(5.2217367, coordinates.get(0).getLatitude(), "altitude and accuracy are discarded");
-            assertEquals(10.2852433, coordinates.get(0).getLongitude());
+            assertEquals(5.221737, coordinates.get(0).getLatitude(), "altitude and accuracy are discarded");
+            assertEquals(10.285243, coordinates.get(0).getLongitude());
         });
     }
 
