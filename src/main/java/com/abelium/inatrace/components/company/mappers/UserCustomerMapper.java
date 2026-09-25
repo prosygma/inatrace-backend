@@ -49,6 +49,7 @@ public class UserCustomerMapper {
             return null;
         }
 
+        apiUserCustomer.setFarmerCompanyInternalId(entity.getFarmerCompanyInternalId());
         apiUserCustomer.setBank(ProductApiTools.toApiBankInformation(entity.getBank()));
 
         if (entity.getUserCustomerLocation() != null) {
