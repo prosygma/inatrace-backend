@@ -131,6 +131,12 @@ public class FacilityService extends BaseService {
 		entity.setIsDeactivated(BooleanUtils.isTrue(apiFacility.getDeactivated()));
 		entity.setDisplayPriceDeterminedLater(BooleanUtils.isTrue(apiFacility.getDisplayPriceDeterminedLater()));
 
+		if (apiFacility.getFacilityLocation() == null || apiFacility.getFacilityLocation().getAddress() == null
+				|| apiFacility.getFacilityLocation().getAddress().getCountry() == null
+				|| apiFacility.getFacilityLocation().getAddress().getCountry().getId() == null) {
+			throw new ApiException(ApiStatus.INVALID_REQUEST, "Facility address country is required");
+		}
+
 		facilityLocation.setLatitude(apiFacility.getFacilityLocation().getLatitude());
 		facilityLocation.setLongitude(apiFacility.getFacilityLocation().getLongitude());
 		facilityLocation.setNumberOfFarmers(apiFacility.getFacilityLocation().getNumberOfFarmers());

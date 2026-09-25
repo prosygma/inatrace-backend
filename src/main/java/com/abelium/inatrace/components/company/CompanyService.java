@@ -382,6 +382,8 @@ public class CompanyService extends BaseService {
             plot.setCenterLatitude(latCenter.doubleValue());
             plot.setCenterLongitude(lonCenter.doubleValue());
 			plot.setLastUpdated(new Date());
+			plot.setSynchronisationDate(new Date());
+			plot.setCollectorId(getCurrentUserId());
 
 			populatePlotCoordinates(plot, apiPlot.getCoordinates());
 
