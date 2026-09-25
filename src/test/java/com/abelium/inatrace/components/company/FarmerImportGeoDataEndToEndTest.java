@@ -51,6 +51,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -264,6 +265,34 @@ class FarmerImportGeoDataEndToEndTest {
             assertEquals(coordinates.get(0).getLongitude(), coordinates.get(3).getLongitude());
             assertEquals(5.2217367, coordinates.get(0).getLatitude());
             assertEquals(10.2852433, coordinates.get(0).getLongitude());
+        });
+    }
+
+    @Test
+    void reimportingAnExistingFarmer_stampsTheAddedPlotsWithASynchronisationDate() throws Exception {
+        // Client bug #11: plots attached to an already-existing farmer went through
+        // addPlotsToExistingFarmer, which never set synchronisationDate, so the export had blanks.
+        String internalId = runId + "-resync";
+        byte[] xlsx = buildWorkbook(internalId,
+                "POLYGON((5.2217367 10.2852433, 5.2218067 10.285235, 5.2219302 10.2852027))");
+
+        JsonNode first = callImportEndpoint(uploadDocument(xlsx));
+        assertEquals(1, first.get("successful").asInt(), "first import should create the farmer: " + first);
+
+        JsonNode second = callImportEndpoint(uploadDocument(xlsx));
+        assertEquals(1, second.get("duplicates").size(), "second import should see the farmer as existing: " + second);
+
+        new TransactionTemplate(txManager).executeWithoutResult(status -> {
+            UserCustomer farmer = em.createQuery(
+                            "SELECT uc FROM UserCustomer uc WHERE uc.farmerCompanyInternalId = :id", UserCustomer.class)
+                    .setParameter("id", internalId)
+                    .getSingleResult();
+
+            assertEquals(2, farmer.getPlots().size(), "the re-import should have attached a second plot");
+            farmer.getPlots().forEach(plot -> {
+                assertNotNull(plot.getSynchronisationDate(), "plot " + plot.getId() + " has no synchronisationDate");
+                assertNotNull(plot.getCollectorId(), "plot " + plot.getId() + " has no collectorId");
+            });
         });
     }
 
