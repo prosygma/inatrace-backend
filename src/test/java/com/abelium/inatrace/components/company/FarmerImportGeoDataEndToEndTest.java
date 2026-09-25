@@ -292,6 +292,7 @@ class FarmerImportGeoDataEndToEndTest {
             farmer.getPlots().forEach(plot -> {
                 assertNotNull(plot.getSynchronisationDate(), "plot " + plot.getId() + " has no synchronisationDate");
                 assertNotNull(plot.getCollectorId(), "plot " + plot.getId() + " has no collectorId");
+                assertNotNull(plot.getCrop(), "plot " + plot.getId() + " has no crop");
             });
         });
     }

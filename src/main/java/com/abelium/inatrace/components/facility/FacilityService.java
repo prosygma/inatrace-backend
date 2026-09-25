@@ -28,6 +28,7 @@ import com.abelium.inatrace.security.service.CustomUserDetails;
 import com.abelium.inatrace.security.utils.PermissionsUtil;
 import com.abelium.inatrace.tools.PaginationTools;
 import com.abelium.inatrace.tools.Queries;
+import com.abelium.inatrace.types.UserRole;
 import com.abelium.inatrace.types.Language;
 import com.abelium.inatrace.types.ProductCompanyType;
 import jakarta.persistence.TypedQuery;
@@ -73,15 +74,20 @@ public class FacilityService extends BaseService {
 
 		Facility facility = fetchFacility(id);
 
-		// If facility is public (facility that sells semi-products or final products) check that user is enrolled in one of the connected companies
-		if (facility.getIsPublic()) {
+		// Members of the facility's company (and system admins) can always read it. A public facility
+		// (one that sells semi-products or final products) can additionally be read by users of the
+		// companies connected through its company's products. Checking only the product connection
+		// locked a company out of its own facility until it had created a product.
+		boolean ownCompanyOrAdmin = UserRole.SYSTEM_ADMIN.equals(user.getUserRole())
+				|| facility.getCompany().getUsers().stream()
+				.anyMatch(cu -> cu.getUser().getId().equals(user.getUserId()));
 
-			PermissionsUtil.checkUserIfConnectedWithProducts(companyQueries.fetchCompanyProducts(facility.getCompany().getId()), user);
-
-		} else {
-
-			// Check if req. user is enrolled in facility's company
-			PermissionsUtil.checkUserIfCompanyEnrolled(facility.getCompany().getUsers().stream().toList(), user);
+		if (!ownCompanyOrAdmin) {
+			if (BooleanUtils.isTrue(facility.getIsPublic())) {
+				PermissionsUtil.checkUserIfConnectedWithProducts(companyQueries.fetchCompanyProducts(facility.getCompany().getId()), user);
+			} else {
+				PermissionsUtil.checkUserIfCompanyEnrolled(facility.getCompany().getUsers().stream().toList(), user);
+			}
 		}
 
 		return FacilityMapper.toApiFacility(facility, language);

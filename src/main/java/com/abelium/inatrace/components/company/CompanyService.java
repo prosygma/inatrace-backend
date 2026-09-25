@@ -305,7 +305,16 @@ public class CompanyService extends BaseService {
 	}
 
 	public boolean existsUserCustomer(ApiUserCustomer apiUserCustomer) {
-		// Vérifier d'abord par internalId si présent
+		return !findMatchingUserCustomers(apiUserCustomer).isEmpty();
+	}
+
+	/**
+	 * Farmers an imported row is considered a duplicate of: by company-internal ID when the row has
+	 * one and it matches, otherwise by name, surname and city. existsUserCustomer and
+	 * addPlotsToExistingFarmer must agree on this, or a row reported as a duplicate gets its plots
+	 * silently dropped.
+	 */
+	private List<UserCustomer> findMatchingUserCustomers(ApiUserCustomer apiUserCustomer) {
 		if (apiUserCustomer.getFarmerCompanyInternalId() != null) {
 			List<UserCustomer> byInternalId = em.createQuery(
 							"SELECT uc FROM UserCustomer uc WHERE uc.farmerCompanyInternalId = :internalId",
@@ -313,17 +322,23 @@ public class CompanyService extends BaseService {
 					.setParameter("internalId", apiUserCustomer.getFarmerCompanyInternalId())
 					.getResultList();
 
-			if (!byInternalId.isEmpty()) return true;
+			if (!byInternalId.isEmpty()) return byInternalId;
 		}
 
-		// Fallback sur la vérification par nom/prénom/ville
-		return !em.createNamedQuery("UserCustomer.getUserCustomerByNameSurnameAndCity",
+		return em.createNamedQuery("UserCustomer.getUserCustomerByNameSurnameAndCity",
 						UserCustomer.class)
 				.setParameter("name", apiUserCustomer.getName())
 				.setParameter("surname", apiUserCustomer.getSurname())
 				.setParameter("city", apiUserCustomer.getLocation().getAddress().getCity())
-				.getResultList()
-				.isEmpty();
+				.getResultList();
+	}
+
+	private static String farmerLocality(ApiUserCustomer farmer) {
+		if (farmer.getLocation() == null || farmer.getLocation().getAddress() == null) {
+			return null;
+		}
+		String village = farmer.getLocation().getAddress().getVillage();
+		return StringUtils.isNotBlank(village) ? village : farmer.getLocation().getAddress().getCity();
 	}
 
 	public void addPlotsToExistingFarmer_old(ApiUserCustomer newFarmerData) {
@@ -361,16 +376,20 @@ public class CompanyService extends BaseService {
 		em.merge(existingFarmer);
 	}
 
-	public void addPlotsToExistingFarmer(ApiUserCustomer newFarmerData) {
-		UserCustomer existingFarmer = em.createQuery(
-						"SELECT uc FROM UserCustomer uc WHERE uc.farmerCompanyInternalId = :internalId",
-						UserCustomer.class)
-				.setParameter("internalId", newFarmerData.getFarmerCompanyInternalId())
-				.getSingleResult();
+	public void addPlotsToExistingFarmer(ApiUserCustomer newFarmerData) throws ApiException {
+		List<UserCustomer> matches = findMatchingUserCustomers(newFarmerData);
+		if (matches.isEmpty()) {
+			return;
+		}
+		UserCustomer existingFarmer = matches.get(0);
 
 		for (ApiPlot apiPlot : newFarmerData.getPlots()) {
 			Plot plot = new Plot();
 			plot.setPlotName(apiPlot.getPlotName());
+			if (apiPlot.getCrop() != null && apiPlot.getCrop().getId() != null) {
+				plot.setCrop(fetchProductType(apiPlot.getCrop().getId()));
+			}
+			plot.setNumberOfPlants(apiPlot.getNumberOfPlants());
 			plot.setUnit(apiPlot.getUnit());
 			plot.setSize(apiPlot.getSize());
 			plot.setFarmer(existingFarmer);
@@ -453,10 +472,15 @@ public class CompanyService extends BaseService {
 		List<ApiPlot> companyFarmersPlots = new ArrayList<>();
 		for (ApiUserCustomer farmer: farmers) {
 			if (!CollectionUtils.isEmpty(farmer.getPlots())) {
+				String locality = farmerLocality(farmer);
 				for (ApiPlot plot: farmer.getPlots()) {
 
-					// Set the farmer ID in the Plot object and add it to the combined collection of plots
+					// Identify the owning farmer on the plot, so the company map can show whose plot it is
 					plot.setFarmerId(farmer.getId());
+					plot.setFarmerName(farmer.getName());
+					plot.setFarmerSurname(farmer.getSurname());
+					plot.setFarmerCompanyInternalId(farmer.getFarmerCompanyInternalId());
+					plot.setFarmerLocality(locality);
 					companyFarmersPlots.add(plot);
 				}
 			}

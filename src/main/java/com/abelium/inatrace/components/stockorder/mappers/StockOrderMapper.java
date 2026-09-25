@@ -55,11 +55,11 @@ public class StockOrderMapper {
 
         // Farmer
         apiStockOrder.setProducerUserCustomer(
-                UserCustomerMapper.toApiUserCustomerBase(entity.getProducerUserCustomer()));
+                UserCustomerMapper.toApiUserCustomerIdentity(entity.getProducerUserCustomer()));
 
         // Collector
         apiStockOrder.setRepresentativeOfProducerUserCustomer(
-                UserCustomerMapper.toApiUserCustomerBase(entity.getRepresentativeOfProducerUserCustomer()));
+                UserCustomerMapper.toApiUserCustomerIdentity(entity.getRepresentativeOfProducerUserCustomer()));
 
         return apiStockOrder;
     }
@@ -263,11 +263,11 @@ public class StockOrderMapper {
 
             // Farmer
             apiStockOrder.setProducerUserCustomer(
-                    UserCustomerMapper.toApiUserCustomerBase(entity.getProducerUserCustomer()));
+                    UserCustomerMapper.toApiUserCustomerIdentity(entity.getProducerUserCustomer()));
 
             // Collector
             apiStockOrder.setRepresentativeOfProducerUserCustomer(
-                    UserCustomerMapper.toApiUserCustomerBase(entity.getRepresentativeOfProducerUserCustomer()));
+                    UserCustomerMapper.toApiUserCustomerIdentity(entity.getRepresentativeOfProducerUserCustomer()));
 
             apiStockOrder.setCurrency(entity.getCurrency());
             apiStockOrder.setCost(entity.getCost());

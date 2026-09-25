@@ -20,6 +20,28 @@ public class UserCustomerMapper {
         return apiUserCustomer;
     }
 
+    /**
+     * Base fields plus what is needed to tell farmers with the same name apart (company-internal ID
+     * and location), without the bank details that toApiUserCustomer adds. Used for the farmer and
+     * collector shown on every delivery row.
+     */
+    public static ApiUserCustomer toApiUserCustomerIdentity(UserCustomer entity) {
+
+        ApiUserCustomer apiUserCustomer = toApiUserCustomerBase(entity);
+        if (apiUserCustomer == null) {
+            return null;
+        }
+
+        apiUserCustomer.setFarmerCompanyInternalId(entity.getFarmerCompanyInternalId());
+        if (entity.getUserCustomerLocation() != null) {
+            apiUserCustomer.setLocation(new ApiUserCustomerLocation());
+            apiUserCustomer.getLocation()
+                    .setAddress(AddressMapper.toApiAddress(entity.getUserCustomerLocation().getAddress()));
+        }
+
+        return apiUserCustomer;
+    }
+
     public static ApiUserCustomer toApiUserCustomer(UserCustomer entity) {
 
         ApiUserCustomer apiUserCustomer = toApiUserCustomerBase(entity);
