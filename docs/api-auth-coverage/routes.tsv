@@ -192,6 +192,7 @@ PUT	/api/chain/value-chain	ValueChainController#createOrUpdateValueChain
 PUT	/api/company/companyCustomers	CompanyController#updateCompanyCustomer
 PUT	/api/company/profile	CompanyController#updateCompany
 PUT	/api/company/userCustomers/edit	CompanyController#updateUserCustomer
+PUT	/api/company/userCustomers/{id}/validation-status	CompanyController#setUserCustomerValidationStatus
 PUT	/api/product-type	ProductTypeController#updateProductType
 PUT	/api/product/	ProductController#updateProduct
 PUT	/api/product/knowledgeBlog	ProductController#updateProductKnowledgeBlog

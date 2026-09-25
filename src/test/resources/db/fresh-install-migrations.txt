@@ -49,3 +49,4 @@ SQL V2025_02_27_10_00__Alter_User_translation.sql
 SQL V2025_11_05_11_10__Alter_ApiPlot.sql
 SQL V2026_09_25_12_00__Backfill_plot_synchronisation_date.sql
 SQL V2026_09_25_13_00__Add_missing_Cameroon_country.sql
+SQL V2026_09_26_10_00__Backfill_farmer_validation_status.sql
