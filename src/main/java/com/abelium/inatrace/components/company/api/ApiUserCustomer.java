@@ -7,6 +7,7 @@ import com.abelium.inatrace.components.product.api.ApiBankInformation;
 import com.abelium.inatrace.components.product.api.ApiFarmInformation;
 import com.abelium.inatrace.components.product.api.ApiProductType;
 import com.abelium.inatrace.types.Gender;
+import com.abelium.inatrace.types.FarmerValidationStatus;
 import com.abelium.inatrace.types.UserCustomerType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
@@ -26,6 +27,9 @@ public class ApiUserCustomer extends ApiBaseEntity {
 	
 	@Schema(description = "Type")
 	public UserCustomerType type;
+
+	@Schema(description = "Supervisor review state; read-only here, changed through the validation-status endpoint")
+	public FarmerValidationStatus validationStatus;
 	
 	@Schema(description = "Name")
 	@Size(max = Lengths.NAME)
@@ -98,6 +102,14 @@ public class ApiUserCustomer extends ApiBaseEntity {
 
 	public void setType(UserCustomerType type) {
 		this.type = type;
+	}
+
+	public FarmerValidationStatus getValidationStatus() {
+		return validationStatus;
+	}
+
+	public void setValidationStatus(FarmerValidationStatus validationStatus) {
+		this.validationStatus = validationStatus;
 	}
 
 	public String getName() {

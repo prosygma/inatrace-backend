@@ -29,6 +29,7 @@ import com.abelium.inatrace.db.entities.value_chain.ValueChain;
 import com.abelium.inatrace.security.service.CustomUserDetails;
 import com.abelium.inatrace.security.utils.PermissionsUtil;
 import com.abelium.inatrace.tools.*;
+import com.abelium.inatrace.types.FarmerValidationStatus;
 import com.abelium.inatrace.types.*;
 import com.mapbox.geojson.Feature;
 import com.mapbox.geojson.FeatureCollection;
@@ -1011,6 +1012,11 @@ public class CompanyService extends BaseService {
 		userCustomer.setFarmerCompanyInternalId(apiUserCustomer.getFarmerCompanyInternalId());
 		userCustomer.setGender(apiUserCustomer.getGender());
 		userCustomer.setType(apiUserCustomer.getType());
+		// Farmers added by collectors wait for a supervisor (company admin or system admin) to review
+		// them; whatever state the client sends is ignored.
+		userCustomer.setValidationStatus(UserCustomerType.FARMER.equals(apiUserCustomer.getType())
+				&& !isSystemAdmin(user) && !isCompanyAdmin(user, companyId)
+				? FarmerValidationStatus.PENDING : FarmerValidationStatus.VALIDATED);
 		userCustomer.setEmail(apiUserCustomer.getEmail());
 		userCustomer.setName(apiUserCustomer.getName());
 		userCustomer.setSurname(apiUserCustomer.getSurname());
@@ -1531,6 +1537,32 @@ public class CompanyService extends BaseService {
 		PermissionsUtil.checkUserIfCompanyEnrolled(userCustomer.getCompany().getUsers().stream().toList(), user);
 
 		em.remove(userCustomer);
+	}
+
+	/**
+	 * Supervisor review of a farmer: only a system admin or an admin of the farmer's company may
+	 * change the state.
+	 */
+	@Transactional
+	public ApiUserCustomer setUserCustomerValidationStatus(Long id,
+														   FarmerValidationStatus validationStatus,
+														   CustomUserDetails user,
+														   Language language) throws ApiException {
+
+		if (validationStatus == null) {
+			throw new ApiException(ApiStatus.INVALID_REQUEST, "Validation status is required");
+		}
+
+		UserCustomer userCustomer = fetchUserCustomer(id);
+		if (!UserCustomerType.FARMER.equals(userCustomer.getType())) {
+			throw new ApiException(ApiStatus.INVALID_REQUEST, "Only farmers have a validation status");
+		}
+		if (!isSystemAdmin(user) && !isCompanyAdmin(user, userCustomer.getCompany().getId())) {
+			throw new ApiException(ApiStatus.UNAUTHORIZED, "Only a company admin can validate farmers");
+		}
+
+		userCustomer.setValidationStatus(validationStatus);
+		return companyApiTools.toApiUserCustomer(userCustomer, user.getUserId(), language);
 	}
 
 	@Transactional
@@ -2061,6 +2093,10 @@ public class CompanyService extends BaseService {
 					break;
 			}
 			condition = condition.and(queryCondition);
+		}
+
+		if (request.getValidationStatus() != null) {
+			condition = condition.and(userCustomer.getValidationStatus()).eq(request.getValidationStatus());
 		}
 
 		Torpedo.where(condition);

@@ -5,6 +5,7 @@ import com.abelium.inatrace.db.base.BaseEntity;
 import com.abelium.inatrace.db.entities.company.Company;
 import com.abelium.inatrace.db.entities.product.Product;
 import com.abelium.inatrace.types.Gender;
+import com.abelium.inatrace.types.FarmerValidationStatus;
 import com.abelium.inatrace.types.UserCustomerType;
 import jakarta.persistence.*;
 
@@ -43,6 +44,13 @@ public class UserCustomer extends BaseEntity {
 	@Enumerated(EnumType.STRING)
 	@Column(length = Lengths.ENUM)
 	private UserCustomerType type;
+
+	/**
+	 * Supervisor review state (see FarmerValidationStatus)
+	 */
+	@Enumerated(EnumType.STRING)
+	@Column(length = Lengths.ENUM)
+	private FarmerValidationStatus validationStatus;
 	
 	/**
 	 * name
@@ -118,6 +126,14 @@ public class UserCustomer extends BaseEntity {
 
 	public void setType(UserCustomerType type) {
 		this.type = type;
+	}
+
+	public FarmerValidationStatus getValidationStatus() {
+		return validationStatus;
+	}
+
+	public void setValidationStatus(FarmerValidationStatus validationStatus) {
+		this.validationStatus = validationStatus;
 	}
 
 	public Company getCompany() {

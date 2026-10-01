@@ -26,6 +26,7 @@ import com.abelium.inatrace.db.entities.value_chain.CompanyValueChain;
 import com.abelium.inatrace.db.entities.value_chain.ValueChain;
 import com.abelium.inatrace.tools.ListTools;
 import com.abelium.inatrace.tools.Queries;
+import com.abelium.inatrace.types.FarmerValidationStatus;
 import com.abelium.inatrace.types.Language;
 import com.abelium.inatrace.types.UserCustomerType;
 import org.apache.commons.lang3.BooleanUtils;
@@ -374,6 +375,9 @@ public class CompanyApiTools {
 		apiUserCustomer.setName(userCustomer.getName());
 		apiUserCustomer.setSurname(userCustomer.getSurname());
 		apiUserCustomer.setType(userCustomer.getType());
+		// Rows written before the state existed are backfilled by migration; treat a gap as validated
+		apiUserCustomer.setValidationStatus(userCustomer.getValidationStatus() != null
+				? userCustomer.getValidationStatus() : FarmerValidationStatus.VALIDATED);
 		apiUserCustomer.setPhone(userCustomer.getPhone());
 		apiUserCustomer.setEmail(userCustomer.getEmail());
 		apiUserCustomer.setGender(userCustomer.getGender());

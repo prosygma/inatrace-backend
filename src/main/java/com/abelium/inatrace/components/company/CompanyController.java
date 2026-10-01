@@ -8,6 +8,7 @@ import com.abelium.inatrace.components.product.api.ApiListCustomersRequest;
 import com.abelium.inatrace.components.product.api.ApiProductType;
 import com.abelium.inatrace.components.value_chain.api.ApiValueChain;
 import com.abelium.inatrace.security.service.CustomUserDetails;
+import com.abelium.inatrace.types.FarmerValidationStatus;
 import com.abelium.inatrace.types.Language;
 import com.abelium.inatrace.types.UserCustomerType;
 import io.swagger.v3.oas.annotations.Operation;
@@ -129,6 +130,17 @@ public class CompanyController {
 
         return new ApiPaginatedResponse<>(companyService.getUserCustomersForCompanyAndType(companyId, type, request,
                 authUser, language));
+    }
+
+    @PutMapping(value = "/userCustomers/{id}/validation-status")
+    @Operation(summary = "Set the supervisor review state of a farmer (company admin or system admin only)")
+    public ApiResponse<ApiUserCustomer> setUserCustomerValidationStatus(
+            @AuthenticationPrincipal CustomUserDetails authUser,
+            @Valid @Parameter(description = "User customer ID", required = true) @PathVariable("id") Long id,
+            @Valid @Parameter(description = "New review state", required = true) @RequestParam("status") FarmerValidationStatus status,
+            @RequestHeader(value = "language", defaultValue = "EN", required = false) Language language) throws ApiException {
+
+        return new ApiResponse<>(companyService.setUserCustomerValidationStatus(id, status, authUser, language));
     }
 
     @GetMapping(value = "/userCustomers/{companyId}/plots")
