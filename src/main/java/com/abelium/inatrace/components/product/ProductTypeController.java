@@ -60,9 +60,10 @@ public class ProductTypeController {
     @PreAuthorize("hasAuthority('SYSTEM_ADMIN')")
     @Operation(summary = "Delete a product type")
     public ApiDefaultResponse deleteProductType(
-            @RequestParam(value = "id") Long id
+            @RequestParam(value = "id") Long id,
+            @RequestHeader(value = "language", defaultValue = "EN", required = false) Language language
     ) throws ApiException {
-        return productTypeService.deleteProductType(id);
+        return productTypeService.deleteProductType(id, language);
     }
 
 }
