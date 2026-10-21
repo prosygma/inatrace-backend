@@ -18,8 +18,10 @@ import jakarta.mail.MessagingException;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 
+import jakarta.annotation.PostConstruct;
+
 import org.apache.commons.lang3.StringUtils;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.mail.MailException;
@@ -34,8 +36,17 @@ public class MailEngine
 {
     private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(MailEngine.class);
 
-    @Autowired
-    private JavaMailSenderImpl mailSender;
+    /**
+     * Never null. When no SMTP server is configured, Spring Boot does not create a
+     * JavaMailSenderImpl at all, and this falls back to an unconfigured instance so the
+     * application can still start. An unconfigured sender builds messages perfectly well;
+     * it only fails if something actually tries to transmit one, which
+     * {@code INATrace.mail.sendingEnabled} already prevents.
+     */
+    private final JavaMailSenderImpl mailSender;
+
+    /** Whether the sender above came from configuration rather than the fallback. */
+    private final boolean mailSenderConfigured;
     
     @Value("${INATrace.mail.template.from}")
     private String fromAddress;
@@ -46,6 +57,31 @@ public class MailEngine
     @Value("${INATrace.mail.sendingEnabled}")
     private boolean sendingEnabled;
     
+
+    public MailEngine(ObjectProvider<JavaMailSenderImpl> mailSenderProvider) {
+        JavaMailSenderImpl configured = mailSenderProvider.getIfAvailable();
+        this.mailSenderConfigured = configured != null;
+        this.mailSender = configured != null ? configured : new JavaMailSenderImpl();
+    }
+
+    /**
+     * Refuse to start if mail sending is switched on but there is nothing to send it with.
+     * Leaving that combination to fail later would swallow every message silently.
+     */
+    @PostConstruct
+    void verifyMailConfiguration() {
+        if (mailSenderConfigured) {
+            return;
+        }
+        if (sendingEnabled) {
+            throw new IllegalStateException(
+                    "INATrace.mail.sendingEnabled is true but no SMTP server is configured. "
+                            + "Set spring.mail.host (and spring.mail.port), or set "
+                            + "INATrace.mail.sendingEnabled = false.");
+        }
+        logger.warn("No SMTP server configured (spring.mail.host is not set); mail sending is off. "
+                + "Messages will be built but never transmitted.");
+    }
 
     /**
      * Asynchronously send a single part plaintext or html email without {@code cc} or {@code bcc} destinations.

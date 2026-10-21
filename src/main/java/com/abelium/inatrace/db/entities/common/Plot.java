@@ -51,10 +51,12 @@ public class Plot extends BaseEntity {
     @Column
     private Long collectorId;
 
-
-    @OneToMany(mappedBy = "plot", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
-    @OrderBy("coordinateOrder ASC")
-	private Set<PlotCoordinate> coordinates = new LinkedHashSet<>(); // preservera lordre des coordonées
+	@OneToMany(mappedBy = "plot",
+	           cascade = CascadeType.ALL,
+	           orphanRemoval = true,
+	           fetch = FetchType.LAZY)
+	@OrderBy("coordinateOrder ASC")
+	private List<PlotCoordinate> coordinates;
 
 	@ManyToOne
 	private UserCustomer farmer;
@@ -123,14 +125,14 @@ public class Plot extends BaseEntity {
 		this.lastUpdated = lastUpdated;
 	}
 
-	public Set<PlotCoordinate> getCoordinates() {
+	public List<PlotCoordinate> getCoordinates() {
 		if (coordinates == null) {
-			coordinates = new LinkedHashSet<>(); // au lieu de HashSet pour preserver l'ordre
+			coordinates = new ArrayList<>();
 		}
 		return coordinates;
 	}
 
-	public void setCoordinates(Set<PlotCoordinate> coordinates) {
+	public void setCoordinates(List<PlotCoordinate> coordinates) {
 		this.coordinates = coordinates;
 	}
 

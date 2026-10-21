@@ -2,7 +2,10 @@ package com.abelium.inatrace.db.entities.stockorder;
 
 import com.abelium.inatrace.db.base.BaseEntity;
 import com.abelium.inatrace.db.entities.common.ActivityProof;
-import jakarta.persistence.*;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 
 /**
  * Connecting entity that connects stock order with particular activity proof.

@@ -33,14 +33,16 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.io.IOException;
 import java.util.concurrent.CompletionException;
 
 @ControllerAdvice
 public class DefaultControllerExceptionHandler {
-	
+
     private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(DefaultControllerExceptionHandler.class);
+    private static final String INTERNAL_SERVER_ERROR_MESSAGE = "Internal server error";
 
     @Autowired
     private SpringExceptionResponseBuilder exceptionResponseBuilder;
@@ -156,6 +158,12 @@ public class DefaultControllerExceptionHandler {
         logger.error(exc.getMessage());
         return exceptionResponseBuilder.getAcceptableResponse(HttpStatus.NOT_FOUND, ApiStatus.ERROR, exc.getMessage(), request);
     }
+
+    @ExceptionHandler
+    public ResponseEntity<?> handleNoResourceFoundException(NoResourceFoundException exc, HttpServletRequest request) {
+        logger.warn("No resource found: {}", exc.getMessage());
+        return exceptionResponseBuilder.getAcceptableResponse(HttpStatus.NOT_FOUND, ApiStatus.ERROR, exc.getMessage(), request);
+    }
     
     @ExceptionHandler
     public ResponseEntity<?> handleValidationException(MethodArgumentNotValidException exc, HttpServletRequest request) {
@@ -220,9 +228,9 @@ public class DefaultControllerExceptionHandler {
     private ResponseEntity<?> handleUnknownException(Throwable exc, HttpServletRequest request) {
     	logAndUpdate(exc, request);
         
-        // we do not return exc.getMessage() as response's detailed message to prevent accidentally returning sensitive information
-        String message = "Uncaught exception " + exc.getClass().getName();
-        return exceptionResponseBuilder.getAcceptableResponse(HttpStatus.INTERNAL_SERVER_ERROR, ApiStatus.ERROR, message, request);
+        // Keep technical details in the server log only; response bodies must not expose exception classes or messages.
+        return exceptionResponseBuilder.getAcceptableResponse(HttpStatus.INTERNAL_SERVER_ERROR, ApiStatus.ERROR,
+                INTERNAL_SERVER_ERROR_MESSAGE, request);
     }
     
     private void logAndUpdate(Throwable exc, HttpServletRequest request) {

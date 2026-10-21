@@ -10,6 +10,7 @@ import com.abelium.inatrace.components.codebook.processing_evidence_type.Process
 import com.abelium.inatrace.components.codebook.processingevidencefield.ProcessingEvidenceFieldService;
 import com.abelium.inatrace.components.codebook.semiproduct.SemiProductService;
 import com.abelium.inatrace.components.common.BaseService;
+import com.abelium.inatrace.components.common.StorageKeyCache;
 import com.abelium.inatrace.components.common.api.ApiActivityProof;
 import com.abelium.inatrace.components.common.api.ApiCertification;
 import com.abelium.inatrace.components.common.api.ApiDocument;
@@ -51,6 +52,7 @@ import com.abelium.inatrace.tools.TranslateTools;
 import com.abelium.inatrace.types.Language;
 import com.abelium.inatrace.types.ProcessingActionType;
 import com.abelium.inatrace.types.ProductCompanyType;
+import com.abelium.inatrace.types.UserRole;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -129,8 +131,7 @@ public class StockOrderService extends BaseService {
 
         StockOrder stockOrder = fetchEntity(id, StockOrder.class);
 
-        // Check that the request user is form a company which is connected to the company that owns the quote order (or is a user of that company)
-        PermissionsUtil.checkUserIfConnectedWithProducts(companyQueries.fetchCompanyProducts(stockOrder.getCompany().getId()), user);
+        checkStockOrderReadPermission(stockOrder.getCompany(), user);
 
         return StockOrderMapper.toApiStockOrder(stockOrder, user.getUserId(), language, withProcessingOrder);
     }
@@ -139,8 +140,7 @@ public class StockOrderService extends BaseService {
 
         StockOrder stockOrder = fetchEntity(id, StockOrder.class);
 
-        // Check that the request user is form a company which is connected to the company that owns the quote order (or is a user of that company)
-        PermissionsUtil.checkUserIfConnectedWithProducts(companyQueries.fetchCompanyProducts(stockOrder.getCompany().getId()), user);
+        checkStockOrderReadPermission(stockOrder.getCompany(), user);
 
         // If Stock order has no Processing order set, exit with exception
         if (stockOrder.getProcessingOrder() == null) {
@@ -159,10 +159,9 @@ public class StockOrderService extends BaseService {
             throw new ApiException(ApiStatus.UNAUTHORIZED, "Facility ID should be provided!");
         }
 
-        // Get the owner company of the facility
-        // Using this, we can get the company products and check if the user is enrolled in any of the connected companies
+        // Available stock belongs to the company that owns the requested facility.
         Facility facility = facilityService.fetchFacility(queryRequest.facilityId);
-        PermissionsUtil.checkUserIfConnectedWithProducts(companyQueries.fetchCompanyProducts(facility.getCompany().getId()), user);
+        checkStockOrderReadPermission(facility.getCompany(), user);
 
         return PaginationTools.createPaginatedResponse(em, request,
                 () -> stockOrderQueryObject(
@@ -347,12 +346,7 @@ public class StockOrderService extends BaseService {
 
         // Get the top level Stock order for the provided QR tag (the Stock order that is
         // not used as an input transaction in other Processing orders)
-        StockOrder topLevelStockOrder = em.createNamedQuery("StockOrder.getTopLevelStockOrdersForQrTag", StockOrder.class)
-                .setParameter("qrTag", qrTag)
-                .getResultList()
-                .stream()
-                .findFirst()
-                .orElse(null);
+        StockOrder topLevelStockOrder = findTopLevelStockOrderForQrTag(qrTag);
 
         if (topLevelStockOrder != null) {
 
@@ -373,11 +367,11 @@ public class StockOrderService extends BaseService {
                 ApiHistoryTimeline historyTimeline = new ApiHistoryTimeline();
                 apiQRTagPublic.setHistoryTimeline(historyTimeline);
 
-                // Set holding company IDs that are participating in this Stock order chain
-                Set<Long> participatingCompaniesIds = new HashSet<>();
-
                 // Get the history for the selected Stock order
                 ApiStockOrderHistory stockOrderHistory = getStockOrderAggregatedHistoryList(topLevelStockOrder.getId(), language, null, false);
+
+                // Set holding company IDs that are participating in this Stock order chain.
+                Set<Long> participatingCompaniesIds = getParticipatingCompanyIds(stockOrderHistory);
 
                 // Map the Stock order history timeline to the public QR code tag data
                 historyTimeline.setItems(stockOrderHistory.getTimelineItems()
@@ -390,11 +384,6 @@ public class StockOrderService extends BaseService {
 
                                 ApiFacility apiFacility = processing.getProcessingOrder().getTargetStockOrders()
                                         .stream().findAny().map(ApiStockOrder::getFacility).orElse(null);
-
-                                // Add the facility company ID in the participating companies IDs for this Sto order chain
-                                if (apiFacility != null) {
-                                    participatingCompaniesIds.add(apiFacility.getCompany().getId());
-                                }
 
                                 // If processing item has no public timeline label defined, skip that processing
                                 if (StringUtils.isNotBlank(processing.getProcessingOrder().getProcessingAction().getPublicTimelineLabel())) {
@@ -501,7 +490,11 @@ public class StockOrderService extends BaseService {
                             .setParameter("companyIDs", participatingCompaniesIds)
                             .getResultList()
                             .stream()
-                            .map(cc -> CompanyApiTools.toApiCertification(null, cc))
+                            .map(cc -> {
+                                try (StorageKeyCache.PublicScope ignored = StorageKeyCache.forPublicQrCertificate(qrTag, cc.getId())) {
+                                    return CompanyApiTools.toApiCertification(null, cc);
+                                }
+                            })
                             .collect(Collectors.toList());
                     apiQRTagPublic.setCertificates(apiCertificates);
                 }
@@ -509,6 +502,58 @@ public class StockOrderService extends BaseService {
         }
 
         return apiQRTagPublic;
+    }
+
+    /**
+     * Confirms that a certificate capability still belongs to a company visible in the current public QR history.
+     */
+    @Transactional
+    public void validatePublicQrCertificate(String qrTag, Long certificationId, String expectedStorageKey) throws ApiException {
+        if (StringUtils.isBlank(qrTag) || certificationId == null || StringUtils.isBlank(expectedStorageKey)) {
+            throw invalidPublicCertificate();
+        }
+
+        CompanyCertification certification = em.find(CompanyCertification.class, certificationId);
+        StockOrder topLevelStockOrder = findTopLevelStockOrderForQrTag(qrTag);
+        if (certification == null || certification.getCompany() == null || certification.getCertificate() == null
+                || !Objects.equals(certification.getCertificate().getStorageKey(), expectedStorageKey)
+                || topLevelStockOrder == null) {
+            throw invalidPublicCertificate();
+        }
+
+        Set<Long> participatingCompanyIds = getParticipatingCompanyIds(
+                getStockOrderAggregatedHistoryList(topLevelStockOrder.getId(), Language.EN, null, false));
+        if (!participatingCompanyIds.contains(certification.getCompany().getId())) {
+            throw invalidPublicCertificate();
+        }
+    }
+
+    private StockOrder findTopLevelStockOrderForQrTag(String qrTag) {
+        return em.createNamedQuery("StockOrder.getTopLevelStockOrdersForQrTag", StockOrder.class)
+                .setParameter("qrTag", qrTag)
+                .getResultList()
+                .stream()
+                .findFirst()
+                .orElse(null);
+    }
+
+    private Set<Long> getParticipatingCompanyIds(ApiStockOrderHistory stockOrderHistory) {
+        return stockOrderHistory.getTimelineItems().stream()
+                .map(ApiStockOrderHistoryTimelineItem::getProcessingOrder)
+                .filter(Objects::nonNull)
+                .flatMap(processingOrder -> processingOrder.getTargetStockOrders().stream())
+                .map(ApiStockOrder::getFacility)
+                .filter(Objects::nonNull)
+                .map(ApiFacility::getCompany)
+                .filter(Objects::nonNull)
+                .map(ApiBaseEntity::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+    }
+
+    private ApiException invalidPublicCertificate() {
+        return new ApiException(ApiStatus.INVALID_OR_EXPIRED_STORAGE_KEY,
+                "Invalid storage key or storage key has expired");
     }
 
     private List<ApiPayment> getProducerPayments(ApiStockOrderHistory stockOrderHistory, List<Company> producers) {
@@ -667,7 +712,7 @@ public class StockOrderService extends BaseService {
                 throw new ApiException(ApiStatus.UNAUTHORIZED, "Request user is required!");
             }
 
-            PermissionsUtil.checkUserIfConnectedWithProducts(companyQueries.fetchCompanyProducts(stockOrder.getCompany().getId()), user);
+            checkStockOrderReadPermission(stockOrder.getCompany(), user);
         }
 
         ApiStockOrderHistory stockOrderHistory = new ApiStockOrderHistory();
@@ -851,6 +896,21 @@ public class StockOrderService extends BaseService {
         Facility facility = facilityService.fetchFacility(apiPurchaseOrder.getFacility().id);
         PermissionsUtil.checkUserIfCompanyEnrolled(facility.getCompany().getUsers().stream().toList(), user);
 
+        // Validate the complete batch before the first insert. ApiException is a
+        // checked exception, so refusing a later farmer must not leave earlier
+        // purchase orders from this request behind.
+        if (apiPurchaseOrder.getRepresentativeOfProducerUserCustomer() != null) {
+            checkPurchaseOrderUserCustomerCompany(
+                    apiPurchaseOrder.getRepresentativeOfProducerUserCustomer().getId(), facility);
+        }
+        for (ApiPurchaseOrderFarmer farmer : apiPurchaseOrder.getFarmers()) {
+            if (farmer.getProducerUserCustomer() == null) {
+                throw new ApiException(ApiStatus.INVALID_REQUEST,
+                        "Producer user customer is required for purchase orders!");
+            }
+            checkPurchaseOrderUserCustomerCompany(farmer.getProducerUserCustomer().getId(), facility);
+        }
+
         // Update stocks of type Purchase, one by one
         for (ApiPurchaseOrderFarmer farmer : apiPurchaseOrder.getFarmers()) {
 
@@ -911,15 +971,59 @@ public class StockOrderService extends BaseService {
                                                        CustomUserDetails user,
                                                        ProcessingOrder processingOrder) throws ApiException {
 
-        // Check that the request user is form a company which is connected to the company that owns the quote order (or is a user of that company)
-        if (apiStockOrder.getCompany() != null && apiStockOrder.getCompany().getId() != null) {
-            PermissionsUtil.checkUserIfConnectedWithProducts(companyQueries.fetchCompanyProducts(apiStockOrder.getCompany().getId()), user);
-        } else {
-            // When creating a new Quote order, the underlying stock order has not yet set company
-            PermissionsUtil.checkUserIfConnectedWithProducts(companyQueries.fetchCompanyProducts(processingOrder.getProcessingAction().getCompany().getId()), user);
-        }
+        checkQuoteStockOrderPermission(apiStockOrder, user, processingOrder);
 
         return createOrUpdateStockOrder(apiStockOrder, user, processingOrder, false);
+    }
+
+    public void checkQuoteStockOrderPermission(ApiStockOrder apiStockOrder,
+                                               CustomUserDetails user,
+                                               ProcessingOrder processingOrder) throws ApiException {
+
+        // The request's company ID is not a trusted authorization source. A quote
+        // output belongs to the company that owns its processing action and must
+        // stay there even when an existing StockOrder ID is supplied.
+        Long actionCompanyId = processingOrder.getProcessingAction().getCompany().getId();
+        PermissionsUtil.checkUserIfConnectedWithProducts(
+                companyQueries.fetchCompanyProducts(actionCompanyId), user);
+        if (apiStockOrder.getFacility() == null || apiStockOrder.getFacility().getId() == null) {
+            throw new ApiException(ApiStatus.INVALID_REQUEST, "Facility needs to be provided!");
+        }
+        Facility facility = facilityService.fetchFacility(apiStockOrder.getFacility().getId());
+        if (!Objects.equals(facility.getCompany().getId(), actionCompanyId)) {
+            throw new ApiException(ApiStatus.UNAUTHORIZED,
+                    "Quote output facility belongs to another company");
+        }
+        if (apiStockOrder.getId() != null) {
+            StockOrder existing = fetchEntity(apiStockOrder.getId(), StockOrder.class);
+            if (!Objects.equals(existing.getCompany().getId(), actionCompanyId)) {
+                throw new ApiException(ApiStatus.UNAUTHORIZED,
+                        "Quote output stock order belongs to another company");
+            }
+            if (existing.getProcessingOrder() != null
+                    && !Objects.equals(existing.getProcessingOrder().getId(), processingOrder.getId())) {
+                throw new ApiException(ApiStatus.UNAUTHORIZED,
+                        "Quote output stock order belongs to another processing order");
+            }
+        }
+
+    }
+
+    /**
+     * Administrative stock reads are available to the owner company regardless of
+     * whether it has created a consumer-facing product. Product associations still
+     * grant the existing cross-company read access.
+     */
+    private void checkStockOrderReadPermission(Company ownerCompany, CustomUserDetails user) throws ApiException {
+        boolean isOwnerCompanyMember = ownerCompany.getUsers().stream()
+                .anyMatch(companyUser -> companyUser.getUser().getId().equals(user.getUserId()));
+
+        if (UserRole.SYSTEM_ADMIN.equals(user.getUserRole()) || isOwnerCompanyMember) {
+            return;
+        }
+
+        PermissionsUtil.checkUserIfConnectedWithProducts(
+                companyQueries.fetchCompanyProducts(ownerCompany.getId()), user);
     }
 
     @Transactional
@@ -940,6 +1044,13 @@ public class StockOrderService extends BaseService {
         if (apiStockOrder.getId() != null) {
             entity = fetchEntity(apiStockOrder.getId(), StockOrder.class);
             entity.setUpdatedBy(fetchEntity(user.getUserId(), User.class));
+
+            // An update must be authorised against the owner before any request field can
+            // replace its facility/company. Moving an order between tenants is not supported
+            // by this endpoint because it would also move its financial and stock history.
+            if (checkCompanyEnrolment) {
+                PermissionsUtil.checkUserIfCompanyEnrolled(entity.getCompany().getUsers().stream().toList(), user);
+            }
 
         } else {
             entity = new StockOrder();
@@ -963,6 +1074,44 @@ public class StockOrderService extends BaseService {
         // executed checks (approve/reject quote order transaction, etc.)
         if (checkCompanyEnrolment) {
             PermissionsUtil.checkUserIfCompanyEnrolled(facility.getCompany().getUsers().stream().toList(), user);
+        }
+
+        if (entity.getId() != null && checkCompanyEnrolment
+                && !Objects.equals(entity.getCompany().getId(), facility.getCompany().getId())) {
+            throw new ApiException(ApiStatus.VALIDATION_ERROR,
+                    "Changing a stock order to a facility from another company is not supported");
+        }
+
+        if (apiStockOrder.getConsumerCompanyCustomer() != null
+                && apiStockOrder.getConsumerCompanyCustomer().getId() != null) {
+            CompanyCustomer customer = fetchEntity(
+                    apiStockOrder.getConsumerCompanyCustomer().getId(), CompanyCustomer.class);
+            if (customer.getCompany() == null
+                    || !Objects.equals(customer.getCompany().getId(), facility.getCompany().getId())) {
+                throw new ApiException(ApiStatus.UNAUTHORIZED,
+                        "Stock order customer belongs to another company");
+            }
+        }
+        if (apiStockOrder.getProductOrder() != null
+                && apiStockOrder.getProductOrder().getId() != null) {
+            ProductOrder productOrder = fetchEntity(apiStockOrder.getProductOrder().getId(), ProductOrder.class);
+            if (productOrder.getFacility() == null
+                    || !Objects.equals(productOrder.getFacility().getCompany().getId(), facility.getCompany().getId())) {
+                throw new ApiException(ApiStatus.UNAUTHORIZED,
+                        "Product order belongs to another company");
+            }
+        }
+
+        // A facility owner must not attach another tenant's farmer or collector to a
+        // purchase order. The IDs in the request are untrusted even when the facility
+        // itself belongs to the authenticated user's company.
+        if (apiStockOrder.getOrderType() == OrderType.PURCHASE_ORDER) {
+            if (apiStockOrder.getProducerUserCustomer() != null) {
+                checkPurchaseOrderUserCustomerCompany(apiStockOrder.getProducerUserCustomer().getId(), facility);
+            }
+            if (apiStockOrder.getRepresentativeOfProducerUserCustomer() != null) {
+                checkPurchaseOrderUserCustomerCompany(apiStockOrder.getRepresentativeOfProducerUserCustomer().getId(), facility);
+            }
         }
 
         entity.setOrderType(apiStockOrder.getOrderType());
@@ -1030,14 +1179,46 @@ public class StockOrderService extends BaseService {
         // If entity is new and processing order is provided with processing action type 'GENERATE_QR_CODE', generate a new QR code tag for this stock order
         generateStockOrderQRCodeTag(entity, processingOrder);
 
+        Long previousLocationId = entity.getProductionLocation() == null
+                ? null : entity.getProductionLocation().getId();
+
         // Production location
         ApiStockOrderLocation apiProdLocation = apiStockOrder.getProductionLocation();
         if (apiProdLocation != null) {
 
-            StockOrderLocation stockOrderLocation = fetchEntityOrElse(apiProdLocation.getId(), StockOrderLocation.class, null);
-
-            if(stockOrderLocation == null) {
+            StockOrderLocation stockOrderLocation;
+            if (apiProdLocation.getId() == null) {
                 stockOrderLocation = new StockOrderLocation();
+                em.persist(stockOrderLocation);
+            } else {
+                stockOrderLocation = fetchEntity(apiProdLocation.getId(), StockOrderLocation.class);
+                Long sameCompanyReferences = em.createQuery(
+                                "SELECT COUNT(so) FROM StockOrder so WHERE so.productionLocation.id = :locationId " +
+                                        "AND so.company.id = :companyId", Long.class)
+                        .setParameter("locationId", stockOrderLocation.getId())
+                        .setParameter("companyId", entity.getCompany().getId())
+                        .getSingleResult();
+                if (sameCompanyReferences == 0) {
+                    throw new ApiException(ApiStatus.UNAUTHORIZED, "Production location does not belong to this company");
+                }
+
+                Long allReferences = em.createQuery(
+                                "SELECT COUNT(so) FROM StockOrder so WHERE so.productionLocation.id = :locationId",
+                                Long.class)
+                        .setParameter("locationId", stockOrderLocation.getId())
+                        .getSingleResult();
+                boolean locationChanged = !Objects.equals(stockOrderLocation.getLatitude(), apiProdLocation.getLatitude())
+                        || !Objects.equals(stockOrderLocation.getLongitude(), apiProdLocation.getLongitude())
+                        || !Objects.equals(stockOrderLocation.getNumberOfFarmers(), apiProdLocation.getNumberOfFarmers())
+                        || !Objects.equals(stockOrderLocation.getPinName(), apiProdLocation.getPinName());
+                boolean usedByAnotherOrder = allReferences > (Objects.equals(previousLocationId,
+                        stockOrderLocation.getId()) ? 1 : 0);
+                if (locationChanged && usedByAnotherOrder) {
+                    StockOrderLocation copy = new StockOrderLocation();
+                    copy.setAddress(stockOrderLocation.getAddress());
+                    stockOrderLocation = copy;
+                    em.persist(stockOrderLocation);
+                }
             }
 
             stockOrderLocation.setLatitude(apiProdLocation.getLatitude());
@@ -1103,27 +1284,10 @@ public class StockOrderService extends BaseService {
                 if(apiStockOrder.getRepresentativeOfProducerUserCustomer() != null)
                     entity.setRepresentativeOfProducerUserCustomer(fetchEntity(apiStockOrder.getRepresentativeOfProducerUserCustomer().getId(), UserCustomer.class));
 
-                // Create or update activity proofs
-                entity.getActivityProofs().clear();
-
-                for (ApiActivityProof apiAP : apiStockOrder.getActivityProofs()) {
-
-                    Document activityProofDoc = fetchEntity(apiAP.getDocument().getId(), Document.class);
-
-                    // Créer et persister ActivityProof d'abord
-                    ActivityProof activityProof = new ActivityProof();
-                    activityProof.setDocument(activityProofDoc);
-                    activityProof.setFormalCreationDate(apiAP.getFormalCreationDate());
-                    activityProof.setType(apiAP.getType());
-                    activityProof.setValidUntil(apiAP.getValidUntil());
-                    em.persist(activityProof); // Persistez explicitement
-
-                    // Créer ensuite StockOrderActivityProof
-                    StockOrderActivityProof stockOrderActivityProof = new StockOrderActivityProof();
-                    stockOrderActivityProof.setStockOrder(entity);
-                    stockOrderActivityProof.setActivityProof(activityProof); // Référence à l'entité persistée
-
-                    entity.getActivityProofs().add(stockOrderActivityProof);
+                Set<Long> previousProofIds = updateActivityProofs(entity, apiStockOrder.getActivityProofs());
+                if (!previousProofIds.isEmpty()) {
+                    em.flush();
+                    previousProofIds.forEach(this::removeUnreferencedActivityProof);
                 }
 
                 break;
@@ -1148,6 +1312,12 @@ public class StockOrderService extends BaseService {
 
         if (entity.getId() == null) {
             em.persist(entity);
+        }
+
+        if (previousLocationId != null && !Objects.equals(previousLocationId,
+                entity.getProductionLocation() == null ? null : entity.getProductionLocation().getId())) {
+            em.flush();
+            removeUnreferencedProductionLocation(previousLocationId);
         }
 
         return new ApiBaseEntity(entity);
@@ -1307,13 +1477,144 @@ public class StockOrderService extends BaseService {
     }
 
     @Transactional
+    private void checkPurchaseOrderUserCustomerCompany(Long userCustomerId, Facility facility) throws ApiException {
+        UserCustomer userCustomer = fetchEntity(userCustomerId, UserCustomer.class);
+        if (userCustomer.getCompany() == null
+                || !Objects.equals(userCustomer.getCompany().getId(), facility.getCompany().getId())) {
+            throw new ApiException(ApiStatus.UNAUTHORIZED,
+                    "Purchase order farmer or collector belongs to another company");
+        }
+    }
+
     public void deleteStockOrder(Long id, CustomUserDetails user) throws ApiException {
 
         StockOrder stockOrder = fetchEntity(id, StockOrder.class);
 
         PermissionsUtil.checkUserIfCompanyEnrolledAndAdminOrSystemAdmin(stockOrder.getCompany().getUsers().stream().toList(), user);
 
+        deleteStockOrder(stockOrder);
+    }
+
+    /**
+     * Deletes an output order while its ProcessingOrder service is already performing
+     * the authorisation and dependency checks.
+     */
+    @Transactional
+    public void deleteProcessingOutputStockOrder(StockOrder stockOrder) {
+        deleteStockOrder(stockOrder);
+    }
+
+    private void deleteStockOrder(StockOrder stockOrder) {
+
+        Set<Long> proofIds = stockOrder.getActivityProofs().stream()
+                .map(StockOrderActivityProof::getActivityProof)
+                .filter(Objects::nonNull)
+                .map(ActivityProof::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Long locationId = stockOrder.getProductionLocation() == null
+                ? null : stockOrder.getProductionLocation().getId();
+
         em.remove(stockOrder);
+        em.flush();
+        proofIds.forEach(this::removeUnreferencedActivityProof);
+        if (locationId != null) {
+            removeUnreferencedProductionLocation(locationId);
+        }
+    }
+
+    private Set<Long> updateActivityProofs(StockOrder stockOrder, List<ApiActivityProof> requestedProofs) throws ApiException {
+        Map<Long, StockOrderActivityProof> linksByProofId = stockOrder.getActivityProofs().stream()
+                .filter(link -> link.getActivityProof() != null && link.getActivityProof().getId() != null)
+                .collect(Collectors.toMap(link -> link.getActivityProof().getId(), link -> link));
+        Set<Long> requestedIds = new HashSet<>();
+        Set<Long> removedProofIds = new HashSet<>();
+
+        for (ApiActivityProof requested : requestedProofs) {
+            if (requested == null || requested.getDocument() == null || requested.getDocument().getId() == null) {
+                throw new ApiException(ApiStatus.INVALID_REQUEST, "Every activity proof must include a document ID");
+            }
+
+            if (requested.getId() != null) {
+                if (!requestedIds.add(requested.getId())) {
+                    throw new ApiException(ApiStatus.INVALID_REQUEST, "An activity proof cannot be provided more than once");
+                }
+                StockOrderActivityProof currentLink = linksByProofId.get(requested.getId());
+                if (currentLink == null) {
+                    throw new ApiException(ApiStatus.UNAUTHORIZED, "Activity proof does not belong to this stock order");
+                }
+                ActivityProof currentProof = currentLink.getActivityProof();
+                if (activityProofChanged(currentProof, requested)) {
+                    removedProofIds.add(currentProof.getId());
+                    stockOrder.getActivityProofs().remove(currentLink);
+                    stockOrder.getActivityProofs().add(newActivityProofLink(stockOrder, requested));
+                }
+            } else {
+                stockOrder.getActivityProofs().add(newActivityProofLink(stockOrder, requested));
+            }
+        }
+
+        for (Map.Entry<Long, StockOrderActivityProof> entry : linksByProofId.entrySet()) {
+            if (!requestedIds.contains(entry.getKey())) {
+                removedProofIds.add(entry.getKey());
+                stockOrder.getActivityProofs().remove(entry.getValue());
+            }
+        }
+        return removedProofIds;
+    }
+
+    private StockOrderActivityProof newActivityProofLink(StockOrder stockOrder, ApiActivityProof requested) throws ApiException {
+        ActivityProof proof = new ActivityProof();
+        proof.setDocument(fetchEntity(requested.getDocument().getId(), Document.class));
+        proof.setFormalCreationDate(requested.getFormalCreationDate());
+        proof.setType(requested.getType());
+        proof.setValidUntil(requested.getValidUntil());
+        em.persist(proof);
+
+        StockOrderActivityProof link = new StockOrderActivityProof();
+        link.setStockOrder(stockOrder);
+        link.setActivityProof(proof);
+        return link;
+    }
+
+    private boolean activityProofChanged(ActivityProof current, ApiActivityProof requested) {
+        return !Objects.equals(current.getDocument() == null ? null : current.getDocument().getId(), requested.getDocument().getId())
+                || !Objects.equals(current.getFormalCreationDate(), requested.getFormalCreationDate())
+                || !Objects.equals(current.getType(), requested.getType())
+                || !Objects.equals(current.getValidUntil(), requested.getValidUntil());
+    }
+
+    private void removeUnreferencedActivityProof(Long proofId) {
+        Long stockLinks = em.createQuery(
+                        "SELECT COUNT(link) FROM StockOrderActivityProof link WHERE link.activityProof.id = :proofId",
+                        Long.class)
+                .setParameter("proofId", proofId)
+                .getSingleResult();
+        Long bulkLinks = em.createQuery(
+                        "SELECT COUNT(link) FROM BulkPaymentActivityProof link WHERE link.activityProof.id = :proofId",
+                        Long.class)
+                .setParameter("proofId", proofId)
+                .getSingleResult();
+        if (stockLinks == 0 && bulkLinks == 0) {
+            ActivityProof proof = em.find(ActivityProof.class, proofId);
+            if (proof != null) {
+                em.remove(proof);
+            }
+        }
+    }
+
+    private void removeUnreferencedProductionLocation(Long locationId) {
+        Long references = em.createQuery(
+                        "SELECT COUNT(so) FROM StockOrder so WHERE so.productionLocation.id = :locationId",
+                        Long.class)
+                .setParameter("locationId", locationId)
+                .getSingleResult();
+        if (references == 0) {
+            StockOrderLocation location = em.find(StockOrderLocation.class, locationId);
+            if (location != null) {
+                em.remove(location);
+            }
+        }
     }
 
     public <E> E fetchEntity(Long id, Class<E> entityClass) throws ApiException {
@@ -1323,11 +1624,6 @@ public class StockOrderService extends BaseService {
             throw new ApiException(ApiStatus.INVALID_REQUEST, "Invalid " + entityClass.getSimpleName() + " ID");
         }
         return entity;
-    }
-
-    private <E> E fetchEntityOrElse(Long id, Class<E> entityClass, E defaultValue) {
-        E entity = Queries.get(em, entityClass, id);
-        return entity == null ? defaultValue : entity;
     }
 
     private BigDecimal calculateBalanceForPurchaseOrder(StockOrder stockOrder) {

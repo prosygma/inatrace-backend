@@ -1,5 +1,7 @@
 package com.abelium.inatrace.components.facility;
 
+import org.springframework.test.context.ActiveProfiles;
+import com.abelium.inatrace.support.AbstractMySqlIntegrationTest;
 import com.abelium.inatrace.api.ApiStatus;
 import com.abelium.inatrace.api.errors.ApiException;
 import com.abelium.inatrace.db.entities.codebook.FacilityType;
@@ -35,7 +37,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * HTTP 403 on /api/chain/facility/{id} and could not record a single delivery.
  */
 @SpringBootTest
-class FacilityReadPermissionTest {
+@ActiveProfiles("test")
+class FacilityReadPermissionTest extends AbstractMySqlIntegrationTest {
 
     @Autowired
     private FacilityService facilityService;
@@ -53,6 +56,7 @@ class FacilityReadPermissionTest {
     private Long companyId;
     private Long companyUserId;
     private Long facilityId;
+    private Long facilityLocationId;
     private Long facilityTypeId;
     private Long countryId;
 
@@ -89,6 +93,7 @@ class FacilityReadPermissionTest {
             FacilityLocation location = new FacilityLocation();
             location.setAddress(address);
             location.setPubliclyVisible(Boolean.FALSE);
+            em.persist(location);
 
             Facility facility = new Facility();
             facility.setName("Sellable facility " + runId);
@@ -106,6 +111,7 @@ class FacilityReadPermissionTest {
             companyId = company.getId();
             companyUserId = companyUser.getId();
             facilityId = facility.getId();
+            facilityLocationId = location.getId();
             facilityTypeId = facilityType.getId();
             countryId = country.getId();
         });
@@ -127,6 +133,7 @@ class FacilityReadPermissionTest {
     void cleanup() {
         new TransactionTemplate(txManager).executeWithoutResult(status -> {
             remove(Facility.class, facilityId);
+            remove(FacilityLocation.class, facilityLocationId);
             remove(FacilityType.class, facilityTypeId);
             remove(CompanyUser.class, companyUserId);
             remove(Company.class, companyId);

@@ -12,11 +12,10 @@ import com.abelium.inatrace.tools.PaginationTools;
 import com.abelium.inatrace.tools.QueryTools;
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
 import org.springframework.http.MediaType;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.torpedoquery.jakarta.jpa.OnGoingLogicalCondition;
 import org.torpedoquery.jakarta.jpa.Torpedo;
@@ -29,6 +28,7 @@ import java.util.stream.Collectors;
 @Service
 public class CurrencyTypeService extends BaseService {
 
+    private static final Logger logger = LoggerFactory.getLogger(CurrencyTypeService.class);
     private static final String CURRENCY = "currency";
 
     @Value("${INAtrace.exchangerate.apiKey}")
@@ -61,15 +61,13 @@ public class CurrencyTypeService extends BaseService {
     }
 
     @Transactional
-    @Scheduled(cron = "0 1 0 * * *")
-    @EventListener(ApplicationReadyEvent.class)
     public void updateCurrencies() {
         WebClient webClientSymbols = WebClient.create("http://api.exchangeratesapi.io/v1/symbols?access_key=" + apiKey);
         ApiCurrencySymbolsResponse apiCurrencySymbolsResponse = webClientSymbols
                 .get()
                 .accept(MediaType.APPLICATION_JSON)
                 .retrieve().bodyToMono(ApiCurrencySymbolsResponse.class)
-                .doOnError(Throwable::printStackTrace)
+                .doOnError(e -> logger.error("Failed to fetch exchange rate data: {}", e.getMessage()))
                 .onErrorReturn(new ApiCurrencySymbolsResponse())
                 .block();
         if (apiCurrencySymbolsResponse != null && apiCurrencySymbolsResponse.isSuccess()) {
@@ -90,7 +88,7 @@ public class CurrencyTypeService extends BaseService {
                 .get()
                 .accept(MediaType.APPLICATION_JSON)
                 .retrieve().bodyToMono(ApiCurrencyRatesResponse.class)
-                .doOnError(Throwable::printStackTrace)
+                .doOnError(e -> logger.error("Failed to fetch exchange rate data: {}", e.getMessage()))
                 .onErrorReturn(new ApiCurrencyRatesResponse())
                 .block();
         if (apiCurrencyResponse != null && apiCurrencyResponse.isSuccess()) {

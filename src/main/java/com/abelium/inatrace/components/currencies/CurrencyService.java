@@ -5,6 +5,8 @@ import com.abelium.inatrace.components.common.BaseService;
 import com.abelium.inatrace.components.currencies.api.ApiCurrencyRatesResponse;
 import com.abelium.inatrace.db.entities.codebook.CurrencyType;
 import com.abelium.inatrace.db.entities.currencies.CurrencyPair;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -24,6 +26,7 @@ import java.util.Map;
 @Service
 public class CurrencyService extends BaseService {
 
+    private static final Logger logger = LoggerFactory.getLogger(CurrencyService.class);
     private static final String CURRENCY = "currency";
 
     @Autowired
@@ -103,7 +106,7 @@ public class CurrencyService extends BaseService {
                 .get()
                 .accept(MediaType.APPLICATION_JSON)
                 .retrieve().bodyToMono(ApiCurrencyRatesResponse.class)
-                .doOnError(Throwable::printStackTrace)
+                .doOnError(e -> logger.error("Failed to fetch exchange rate data: {}", e.getMessage()))
                 .onErrorReturn(new ApiCurrencyRatesResponse())
                 .block();
         if (apiCurrencyRatesResponse != null && apiCurrencyRatesResponse.isSuccess()) {

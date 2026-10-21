@@ -12,9 +12,11 @@ import com.abelium.inatrace.components.productorder.api.ApiProductOrder;
 import com.abelium.inatrace.components.productorder.mappers.ProductOrderMapper;
 import com.abelium.inatrace.components.stockorder.api.ApiStockOrder;
 import com.abelium.inatrace.db.entities.facility.Facility;
+import com.abelium.inatrace.db.entities.company.CompanyCustomer;
 import com.abelium.inatrace.db.entities.productorder.ProductOrder;
 import com.abelium.inatrace.db.entities.stockorder.enums.OrderType;
 import com.abelium.inatrace.security.service.CustomUserDetails;
+import com.abelium.inatrace.security.utils.PermissionsUtil;
 import com.abelium.inatrace.types.Language;
 import com.abelium.inatrace.types.UserRole;
 import org.apache.commons.lang3.StringUtils;
@@ -50,8 +52,16 @@ public class ProductOrderService extends BaseService {
 		this.companyService = companyService;
 	}
 
-	public ApiProductOrder getProductOrder(Long id, Language language) throws ApiException {
-		return ProductOrderMapper.toApiProductOrder(fetchProductOrder(id), language);
+	public ApiProductOrder getProductOrder(Long id, CustomUserDetails user, Language language) throws ApiException {
+
+		ProductOrder productOrder = fetchProductOrder(id);
+
+		// The order is readable by the company that owns the facility it was placed at - the same
+		// company createProductOrder checks enrolment against before it will accept the order.
+		PermissionsUtil.checkUserIfCompanyEnrolledOrSystemAdmin(
+				productOrder.getFacility().getCompany().getUsers().stream().toList(), user);
+
+		return ProductOrderMapper.toApiProductOrder(productOrder, language);
 	}
 
 	@Transactional
@@ -78,7 +88,24 @@ public class ProductOrderService extends BaseService {
 		if (
 				user.getUserRole() != UserRole.SYSTEM_ADMIN &&
 				facility.getCompany().getUsers().stream().noneMatch(cu -> cu.getUser().getId().equals(user.getUserId()))) {
-			throw new ApiException(ApiStatus.AUTH_ERROR, "User is not enrolled in owner company");
+			throw new ApiException(ApiStatus.UNAUTHORIZED, "User is not enrolled in owner company");
+		}
+
+		CompanyCustomer customer = companyService.fetchCompanyCustomer(apiProductOrder.getCustomer().getId());
+		if (customer.getCompany() == null
+				|| !customer.getCompany().getId().equals(facility.getCompany().getId())) {
+			throw new ApiException(ApiStatus.UNAUTHORIZED,
+					"Customer belongs to another company");
+		}
+		for (ApiStockOrder item : apiProductOrder.getItems()) {
+			if (item.getFacility() == null || item.getFacility().getId() == null) {
+				throw new ApiException(ApiStatus.VALIDATION_ERROR, "Item facility is required");
+			}
+			Facility itemFacility = facilityService.fetchFacility(item.getFacility().getId());
+			if (!itemFacility.getCompany().getId().equals(facility.getCompany().getId())) {
+				throw new ApiException(ApiStatus.UNAUTHORIZED,
+						"Item facility belongs to another company");
+			}
 		}
 
 		// Prepare the Product order entity
@@ -88,7 +115,7 @@ public class ProductOrderService extends BaseService {
 		productOrder.setRequiredOrganic(apiProductOrder.getRequiredOrganic());
 		productOrder.setRequiredWomensOnly(apiProductOrder.getRequiredWomensOnly());
 		productOrder.setFacility(facility);
-		productOrder.setCustomer(companyService.fetchCompanyCustomer(apiProductOrder.getCustomer().getId()));
+		productOrder.setCustomer(customer);
 
 		em.persist(productOrder);
 

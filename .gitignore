@@ -157,6 +157,8 @@ $RECYCLE.BIN/
 # application.properties file
 src/main/resources/application.properties
 
+# Python bytecode (release scripts)
+__pycache__/
 logs/
 Upload/
 src/main/resources/db/migrations/V2026_07_07_12_00__Backfill_PlotCoordinate_order.sql

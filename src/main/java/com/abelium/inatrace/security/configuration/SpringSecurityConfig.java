@@ -2,6 +2,7 @@ package com.abelium.inatrace.security.configuration;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -21,9 +22,12 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 )
 public class SpringSecurityConfig {
 
+    @Value("${INATrace.auth.bcryptStrength:10}")
+    private int bcryptStrength;
+
     @Bean
     public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+        return new BCryptPasswordEncoder(bcryptStrength);
     }
 
     @Bean
@@ -31,10 +35,20 @@ public class SpringSecurityConfig {
         return new TokenAuthenticationFilter();
     }
 
+	/**
+	 * Springdoc serves these at the root, not under the /api prefix that
+	 * {@link com.abelium.inatrace.configuration.PrefixedApiRequestHandler} adds, because that
+	 * handler only decorates mappings in the com.abelium packages.
+	 *
+	 * <p>/swagger-ui.html is the address springdoc documents and the one people type; it is a
+	 * redirect to /swagger-ui/index.html. Without it permitted the redirect never happens and
+	 * the UI looks absent, so both the entry point and the assets below it are listed.
+	 */
 	private static final String[] SWAGGER_EXCEPTIONS = new String[] {
-        "/api/v3/api-docs",
-        "/api/v3/api-docs/swagger-config",
-        "/api/swagger-ui/**"
+        "/v3/api-docs",
+        "/v3/api-docs/swagger-config",
+        "/swagger-ui.html",
+        "/swagger-ui/**"
 	};
 
 	@Bean

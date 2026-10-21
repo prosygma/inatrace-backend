@@ -86,7 +86,15 @@ public class UserCustomerImportService extends BaseService {
             PermissionsUtil.checkUserIfCompanyEnrolled(company.getUsers().stream().toList(), authUser);
         }
 
-        DocumentData documentData = storageService.downloadDocument(em.find(Document.class, documentId).getStorageKey());
+        Document document = em.find(Document.class, documentId);
+        if (document == null) {
+            throw new ApiException(ApiStatus.INVALID_REQUEST, "Invalid import document.");
+        }
+        if (document.getUploadedBy() == null || !document.getUploadedBy().getId().equals(authUser.getUserId())) {
+            throw new ApiException(ApiStatus.UNAUTHORIZED, "You are not authorized to import this document.");
+        }
+
+        DocumentData documentData = storageService.downloadDocument(document.getStorageKey());
         InputStream inputStream;
         XSSFWorkbook mainWorkbook;
 
@@ -126,11 +134,13 @@ public class UserCustomerImportService extends BaseService {
         // company product types (first two)
         List<ApiProductType> companyProductTypes = readCompanyProductTypes(companyId, language);
 
+        // in case the list is empty, which means company missconfiguration, return an error.
         if (companyProductTypes.isEmpty()) {
-            throw new ApiException(ApiStatus.ERROR,
-                    "Company has no product types configured. Please add a value chain to the company first.");
+                 throw new ApiException(ApiStatus.INVALID_REQUEST,
+                     "Company has no product types configured. "
+                     + "Please associate the company with a value chain before importing farmers.");
         }
-
+        
         // if only first product type is given in Excel,
         // then take only the first element from company product types list
         if (!hasSecondProductType) {

@@ -14,6 +14,9 @@ public class ApiRegisterFieldBoundaryResponse {
 	@JsonProperty("matched geo ids")
 	private List<String> matchedGeoIDs;
 
+    @JsonProperty("message")
+    private String message;
+
 	public String getGeoID() {
 		return geoID;
 	}
@@ -29,5 +32,9 @@ public class ApiRegisterFieldBoundaryResponse {
 	public void setMatchedGeoIDs(List<String> matchedGeoIDs) {
 		this.matchedGeoIDs = matchedGeoIDs;
 	}
+
+    public String getMessage() { return message; }
+
+    public void setMessage(String message) { this.message = message; }
 
 }

@@ -1,5 +1,7 @@
 package com.abelium.inatrace.components.company;
 
+import org.springframework.test.context.ActiveProfiles;
+import com.abelium.inatrace.support.AbstractMySqlIntegrationTest;
 import com.abelium.inatrace.api.ApiStatus;
 import com.abelium.inatrace.api.errors.ApiException;
 import com.abelium.inatrace.components.company.api.ApiListFarmersRequest;
@@ -37,7 +39,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * (company admin or system admin) to validate or reject them.
  */
 @SpringBootTest
-class FarmerValidationStatusTest {
+@ActiveProfiles("test")
+class FarmerValidationStatusTest extends AbstractMySqlIntegrationTest {
 
     @Autowired
     private CompanyService companyService;

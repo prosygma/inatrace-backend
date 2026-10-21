@@ -28,6 +28,10 @@ public class ProductTypeService extends BaseService {
         productType.setCode(apiProductType.getCode());
         em.persist(productType);
 
+        if (apiProductType.getTranslations() == null || apiProductType.getTranslations().isEmpty()) {
+            throw new ApiException(ApiStatus.INVALID_REQUEST, "English translation is required!");
+        }
+
         apiProductType.getTranslations().stream().filter(productTypeTranslation -> productTypeTranslation != null &&
                 Language.EN.equals(productTypeTranslation.getLanguage()) &&
                 productTypeTranslation.getName() != null &&
@@ -90,6 +94,10 @@ public class ProductTypeService extends BaseService {
         }
 
         productType.setCode(apiProductType.getCode());
+
+        if (apiProductType.getTranslations() == null || apiProductType.getTranslations().isEmpty()) {
+            throw new ApiException(ApiStatus.INVALID_REQUEST, "English translation is required!");
+        }
 
         apiProductType.getTranslations().stream().filter(productTypeTranslation -> productTypeTranslation != null &&
                         Language.EN.equals(productTypeTranslation.getLanguage()) &&

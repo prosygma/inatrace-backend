@@ -16,7 +16,9 @@ import java.util.Set;
 	@NamedQuery(name = "Facility.listCollectingFacilitiesByCompany",
 				query = "SELECT f FROM Facility f INNER JOIN FETCH f.facilityTranslations t INNER JOIN f.company c WHERE c.id = :companyId AND f.isCollectionFacility = true AND t.language = :language AND (f.isDeactivated IS NULL OR f.isDeactivated = false)"),
 	@NamedQuery(name = "Facility.countCollectingFacilitiesByCompany",
-				query = "SELECT COUNT(f) FROM Facility f WHERE f.company.id = :companyId AND f.isCollectionFacility = true AND (f.isDeactivated IS NULL OR f.isDeactivated = false)")
+				query = "SELECT COUNT(f) FROM Facility f WHERE f.company.id = :companyId AND f.isCollectionFacility = true AND (f.isDeactivated IS NULL OR f.isDeactivated = false)"),
+	@NamedQuery(name = "Facility.countCompanyFacilities",
+			    query = "SELECT COUNT(f) FROM Facility f WHERE f.company.id = :companyId")
 })
 public class Facility extends TimestampEntity {
 
@@ -56,14 +58,14 @@ public class Facility extends TimestampEntity {
 	@Column
 	private Boolean displayPriceDeterminedLater;
 
-	@ManyToOne(fetch = FetchType.LAZY, cascade = CascadeType.ALL)
+	@ManyToOne(fetch = FetchType.LAZY)
 	@JoinColumn(name = "facilityLocation_id", nullable = true)
 	private FacilityLocation facilityLocation;
 
 	@ManyToOne
 	private Company company;
 
-	@ManyToOne(cascade = CascadeType.ALL)
+	@ManyToOne
 	private FacilityType facilityType;
 
 	@OneToMany(mappedBy = "facility", cascade = CascadeType.ALL, orphanRemoval = true)
@@ -75,7 +77,7 @@ public class Facility extends TimestampEntity {
 	@OneToMany(mappedBy = "facility", cascade = CascadeType.ALL, orphanRemoval = true)
 	private Set<FacilityValueChain> facilityValueChains;
 	
-	@OneToMany(mappedBy = "facility", cascade = CascadeType.ALL)
+	@OneToMany(mappedBy = "facility")
 	private Set<StockOrder> stockOrders;
 
 	@OneToMany(mappedBy = "facility", cascade = CascadeType.ALL, orphanRemoval = true)

@@ -305,22 +305,24 @@ public class ProductApiTools {
         }
 
 		// Update the data sharing agreements
-		p.getDataSharingAgreements().removeIf(pdsa -> pu.getDataSharingAgreements().stream().noneMatch(item -> pdsa.getId().equals(item.getId())));
-		for (ApiProductDataSharingAgreement apiDataSharingAgreement : pu.getDataSharingAgreements()) {
+		if (pu.getDataSharingAgreements() != null) {
+			p.getDataSharingAgreements().removeIf(pdsa -> pu.getDataSharingAgreements().stream().noneMatch(item -> pdsa.getId().equals(item.getId())));
+			for (ApiProductDataSharingAgreement apiDataSharingAgreement : pu.getDataSharingAgreements()) {
 
-			ProductDataSharingAgreement productDataSharingAgreement;
-			if (apiDataSharingAgreement.getId() == null) {
-				productDataSharingAgreement = new ProductDataSharingAgreement();
-				productDataSharingAgreement.setProduct(p);
-				p.getDataSharingAgreements().add(productDataSharingAgreement);
-			} else {
-				productDataSharingAgreement = p.getDataSharingAgreements().stream()
-						.filter(pdsa -> pdsa.getId().equals(apiDataSharingAgreement.getId())).findAny().orElseThrow();
+				ProductDataSharingAgreement productDataSharingAgreement;
+				if (apiDataSharingAgreement.getId() == null) {
+					productDataSharingAgreement = new ProductDataSharingAgreement();
+					productDataSharingAgreement.setProduct(p);
+					p.getDataSharingAgreements().add(productDataSharingAgreement);
+				} else {
+					productDataSharingAgreement = p.getDataSharingAgreements().stream()
+							.filter(pdsa -> pdsa.getId().equals(apiDataSharingAgreement.getId())).findAny().orElseThrow();
+				}
+
+				productDataSharingAgreement.setDescription(apiDataSharingAgreement.getDescription());
+				productDataSharingAgreement.setDocument(
+						commonEngine.fetchDocument(authUser.getUserId(), apiDataSharingAgreement.getDocument()));
 			}
-
-			productDataSharingAgreement.setDescription(apiDataSharingAgreement.getDescription());
-			productDataSharingAgreement.setDocument(
-					commonEngine.fetchDocument(authUser.getUserId(), apiDataSharingAgreement.getDocument()));
 		}
 	}
 
@@ -576,18 +578,6 @@ public class ProductApiTools {
 	public static void updateProductLabel(ProductLabel pl, ApiProductLabel apl) {
 		updateProductLabelBase(pl, apl);
 		if (apl.fields != null) pl.setFields(apl.fields.stream().map(ProductApiTools::toProductLabelField).collect(Collectors.toList()));
-	}
-
-	public void updateProductLabelFields(Long userId, ProductLabel pl, ApiProductLabelUpdateValues aplf) throws ApiException {
-		updateProductLabelBase(pl, aplf);
-		
-		if (aplf.fields == null) return;
-		
-		ApiProductLabelContent ap = toApiProductLabelContent(userId, pl.getContent());
-		for (ApiProductLabelFieldValue afv : aplf.fields) {
-			FieldTools.updateField(ap, afv.name, afv.value);
-		}
-		updateProductLabelContent(userId, pl.getContent(), ap);
 	}
 
 	public void updateProductWithLabels(Long userId, ApiProduct ap, Product p) throws ApiException {

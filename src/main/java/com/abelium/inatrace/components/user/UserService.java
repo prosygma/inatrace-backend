@@ -24,6 +24,7 @@ import com.abelium.inatrace.tools.PasswordTools;
 import com.abelium.inatrace.tools.Queries;
 import com.abelium.inatrace.tools.QueryTools;
 import com.abelium.inatrace.types.*;
+import jakarta.persistence.LockModeType;
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Predicate;
@@ -38,7 +39,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.torpedoquery.jakarta.jpa.Function;
 import org.torpedoquery.jakarta.jpa.OnGoingLogicalCondition;
@@ -49,6 +50,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Lazy
@@ -81,10 +83,33 @@ public class UserService extends BaseService {
     
     @Autowired
     private TokenService tokenEngine;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
     
 	@Transactional
 	public User fetchUserByEmail(String email) {
 		return Queries.getUniqueBy(em, User.class, User::getEmail, email);
+	}
+
+	/**
+	 * Resolves the current account for an access-token request.
+	 *
+	 * <p>JWT claims prove who issued a token, but they are only a snapshot of
+	 * the account at the time of login. Authentication must therefore use the
+	 * persisted account and accept only an ACTIVE user. Returning {@code null}
+	 * lets the security filter leave the request anonymous, so Spring Security
+	 * can produce its normal 401 response without disclosing why the account is
+	 * unavailable.
+	 */
+	@Transactional
+	public User findActiveUserById(Long id) {
+		if (id == null) {
+			return null;
+		}
+
+		User user = Queries.get(em, User.class, id);
+		return user != null && user.getStatus() == UserStatus.ACTIVE ? user : null;
 	}
 
 	public User fetchUserById(Long id) throws ApiException {
@@ -113,29 +138,54 @@ public class UserService extends BaseService {
 		if (user == null) {
 			throw new ApiException(ApiStatus.AUTH_ERROR, "Invalid credentials");
 		}
-		if (user.getStatus() == UserStatus.DEACTIVATED || user.getStatus() == UserStatus.UNCONFIRMED || user.getStatus() == UserStatus.CONFIRMED_EMAIL) {
-			throw new ApiException(ApiStatus.UNAUTHORIZED, "Not confirmed or disabled");
+		checkUserMayStartSession(user);
+		String validatedPassword = user.getPassword();
+		String validatedEmail = user.getEmail();
+		if (!passwordEncoder.matches(loginRequest.password, validatedPassword)) {
+			throw new ApiException(ApiStatus.AUTH_ERROR, "Invalid credentials");
 		}
-		if (!new BCryptPasswordEncoder().matches(loginRequest.password, user.getPassword())) {
+		// Concurrent logins share this lock, while a password reset takes the exclusive lock.
+		// Refresh after locking so a login that verified an old password before a reset cannot
+		// create a session after that reset commits.
+		em.refresh(user, LockModeType.PESSIMISTIC_READ);
+		checkUserMayStartSession(user);
+		if (!Objects.equals(validatedPassword, user.getPassword())
+				|| !Objects.equals(validatedEmail, user.getEmail())) {
 			throw new ApiException(ApiStatus.AUTH_ERROR, "Invalid credentials");
 		}
 		return loginUser(user);
 	}
 
+	/**
+	 * Whether an account is allowed to hold a session: only an ACTIVE one.
+	 *
+	 * <p>Administrator approval is the only admission control in a system that lets anyone
+	 * register. Stated positively so that a status added later fails closed; a deny-list would
+	 * let it through by default. {@link AuthenticationToken#isValid()} applies the same rule to
+	 * refresh tokens.
+	 */
+	private boolean mayStartSession(User user) {
+		return user.getStatus() == UserStatus.ACTIVE;
+	}
+
+	private void checkUserMayStartSession(User user) throws ApiException {
+		if (!mayStartSession(user)) {
+			throw new ApiException(ApiStatus.UNAUTHORIZED, "Not confirmed or disabled");
+		}
+	}
+
 	// Call from @Transactional method with fetched user
 	private ResponseEntity<ApiDefaultResponse> loginUser(User user) throws ApiException {
-		AuthenticationToken authenticationToken = Queries.getUniqueBy(em, AuthenticationToken.class, 
-				AuthenticationToken::getUser, user);
+		// Every path that mints cookies ends here, so the gate lives here too. Password reset
+		// used to reach this method with a CONFIRMED_EMAIL user and walk past the check that
+		// login applied one layer up; a future caller must not be able to repeat that.
+		checkUserMayStartSession(user);
+
 		String accessToken = tokenEngine.createAccessToken(user);
 		String refreshToken = tokenEngine.createRefreshToken(user);
-		
-		if (authenticationToken != null) {
-			authenticationToken.updateToken(refreshToken, tokenEngine.getRefreshTokenExpirationSec());
-		} else {
-			authenticationToken = new AuthenticationToken(user);
-			authenticationToken.updateToken(refreshToken, tokenEngine.getRefreshTokenExpirationSec());
-			em.persist(authenticationToken);
-		}
+		AuthenticationToken authenticationToken = new AuthenticationToken(user);
+		authenticationToken.updateToken(refreshToken, tokenEngine.getRefreshTokenExpirationSec());
+		em.persist(authenticationToken);
 		
 		HttpHeaders responseHeaders = new HttpHeaders();
 		responseHeaders.add(HttpHeaders.SET_COOKIE, tokenEngine.createAccessCookie(accessToken)); 
@@ -226,7 +276,7 @@ public class UserService extends BaseService {
         
         User user = new User();
         user.setEmail(createUserRequest.email);
-        user.setPassword(new BCryptPasswordEncoder().encode(createUserRequest.password));
+        user.setPassword(passwordEncoder.encode(createUserRequest.password));
         user.setName(createUserRequest.name);
         user.setSurname(createUserRequest.surname);
         user.setLanguage(createUserRequest.language);
@@ -437,8 +487,32 @@ public class UserService extends BaseService {
         if (!PasswordTools.isPasswordComplex(request.password)) {
             throw new ApiException(ApiStatus.VALIDATION_ERROR, "Invalid password");
         }
-        confirmationToken.setStatus(Status.DISABLED);
-        confirmationToken.getUser().setPassword(new BCryptPasswordEncoder().encode(request.password));
+		User user = confirmationToken.getUser();
+		// Serialize with logins and other resets, then re-read the reset token under lock.
+		// The lock order is always user before confirmation token.
+		em.refresh(user, LockModeType.PESSIMISTIC_WRITE);
+		em.refresh(confirmationToken, LockModeType.PESSIMISTIC_WRITE);
+		if (!confirmationToken.isValidPasswordResetToken()) {
+			throw new ApiException(ApiStatus.AUTH_ERROR, "Invalid password reset token");
+		}
+		confirmationToken.setStatus(Status.DISABLED);
+		user.setPassword(passwordEncoder.encode(request.password));
+		// Bump the version too: a concurrent logout holding an older entity must not
+		// overwrite the revocation using a stale optimistic-lock version.
+		em.createQuery("update AuthenticationToken t set t.status = :disabled, "
+				+ "t.entityVersion = t.entityVersion + 1 where t.user.id = :userId and t.status = :active")
+				.setParameter("disabled", Status.DISABLED)
+				.setParameter("active", Status.ACTIVE)
+				.setParameter("userId", user.getId())
+				.executeUpdate();
+
+        // The password is changed either way; the session is only granted to an account that could
+        // have logged in with it. An account still awaiting approval gets a plain success and has
+        // to come back through login once an administrator activates it. The frontend sends the
+        // user to /home straight after a reset, so approved users keep that flow.
+        if (!mayStartSession(confirmationToken.getUser())) {
+            return ResponseEntity.ok().body(new ApiDefaultResponse());
+        }
 		return loginUser(confirmationToken.getUser());
 	}
     

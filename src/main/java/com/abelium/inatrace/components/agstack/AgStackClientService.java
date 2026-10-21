@@ -18,16 +18,16 @@ import java.util.List;
 @Service
 public class AgStackClientService {
 
-	@Value("${INATrace.agstack.apiKey}")
-	private String apiKey;
-
-	@Value("${INATrace.agstack.clientSecret}")
-	private String clientSecret;
-
 	@Value("${INATrace.agstack.baseURL}")
 	private String baseURL;
 
-	public ApiRegisterFieldBoundaryResponse registerFieldBoundaryResponse(List<PlotCoordinate> plotCoordinates) {
+    private final AgStackClientTokenManager tokenService;
+
+    public AgStackClientService(AgStackClientTokenManager tokenService) {
+        this.tokenService = tokenService;
+    }
+
+	public ApiRegisterFieldBoundaryResponse registerFieldBoundaryResponse(List<PlotCoordinate> plotCoordinates) throws ApiException {
 
 		ApiRegisterFieldBoundaryRequest request = new ApiRegisterFieldBoundaryRequest();
 		request.setS2Index("8, 13");
@@ -44,26 +44,37 @@ public class AgStackClientService {
 		}
 		request.setWkt("POLYGON ((" + stringBuilder + "))");
 
+        String token = this.tokenService.retrieveToken();
+        if (token == null) {
+            throw new ApiException(ApiStatus.ERROR, "Error while retrieving api token");
+        }
+
 		WebClient webClient = WebClient.create(baseURL);
 
 		return webClient
 				.post()
 				.uri(uriBuilder -> uriBuilder.path("/register-field-boundary").build())
 				.body(Mono.just(request), ApiRegisterFieldBoundaryRequest.class)
-				.header("API-KEY", apiKey)
-				.header("CLIENT-SECRET", clientSecret)
+				.header("Authorization", "Bearer " + token)
+				.header("X-FROM-ASSET-REGISTRY", "True")
 				.accept(MediaType.APPLICATION_JSON)
-				.retrieve()
-				.onStatus(
-						HttpStatus.INTERNAL_SERVER_ERROR::equals,
-						clientResponse -> clientResponse
-								.bodyToMono(ApiRegisterFieldBoundaryErrorResponse.class)
-								.flatMap(error -> Mono.error(new ApiException(ApiStatus.ERROR, error.getError()))))
-				.onStatus(HttpStatus.BAD_REQUEST::equals,
-						clientResponse -> clientResponse
-								.bodyToMono(ApiRegisterFieldBoundaryErrorResponse.class)
-								.flatMap(error -> Mono.error(new ApiException(ApiStatus.INVALID_REQUEST, error.getError()))))
-				.bodyToMono(ApiRegisterFieldBoundaryResponse.class)
+                .exchangeToMono(response -> {
+                    // 1. Handle 400 BAD REQUEST, because of api implementation,
+                    // In this request "matched geo ids" can be returned, with error message
+                    // so it is mapped in response class
+                    if (response.statusCode().equals(HttpStatus.BAD_REQUEST)) {
+                        return response.bodyToMono(ApiRegisterFieldBoundaryResponse.class);
+                    }
+                    // 2. Handle 200 OK (and other success codes)
+                    else if (response.statusCode().is2xxSuccessful()) {
+                        return response.bodyToMono(ApiRegisterFieldBoundaryResponse.class);
+                    }
+                    // 3. Handle errors, throw exception
+                    else {
+                        return response.bodyToMono(ApiRegisterFieldBoundaryErrorResponse.class)
+                                .flatMap(error -> Mono.error(new ApiException(ApiStatus.ERROR, error.getError())));
+                    }
+                })
 				.block();
 	}
 

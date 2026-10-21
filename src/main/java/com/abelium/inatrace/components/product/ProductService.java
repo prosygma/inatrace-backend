@@ -6,6 +6,8 @@ import com.abelium.inatrace.components.analytics.AnalyticsEngine;
 import com.abelium.inatrace.components.analytics.RequestLogService;
 import com.abelium.inatrace.components.codebook.measure_unit_type.MeasureUnitTypeService;
 import com.abelium.inatrace.components.common.BaseService;
+import com.abelium.inatrace.components.common.CommonService;
+import com.abelium.inatrace.components.common.PublicMediaAuthorizationService;
 import com.abelium.inatrace.components.common.StorageKeyCache;
 import com.abelium.inatrace.components.company.CompanyApiTools;
 import com.abelium.inatrace.components.product.api.*;
@@ -25,6 +27,7 @@ import com.abelium.inatrace.types.ProductCompanyType;
 import com.abelium.inatrace.types.ProductLabelStatus;
 import com.abelium.inatrace.types.RequestLogType;
 import com.abelium.inatrace.types.UserRole;
+import com.abelium.inatrace.types.MediaObject;
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaDelete;
 import jakarta.persistence.criteria.Root;
@@ -61,6 +64,12 @@ public class ProductService extends BaseService {
 
 	@Autowired
 	private MeasureUnitTypeService measureUnitTypeService;
+
+	@Autowired
+	private CommonService commonService;
+
+	@Autowired
+	private PublicMediaAuthorizationService publicMediaAuthorizationService;
 	
     private Product productListQueryObject(ApiListProductsRequest request) {
         Product pProxy = Torpedo.from(Product.class);
@@ -84,6 +93,7 @@ public class ProductService extends BaseService {
 	}
     
     private TorpedoProjector<Product, ApiProductListResponse> userProductListQueryObject1(Long userId, ApiListProductsRequest request) {
+
         CompanyUser cuProxy = Torpedo.from(CompanyUser.class);
         Torpedo.where(cuProxy.getUser().getId()).eq(userId);
         List<Long> companyIds = Torpedo.select(cuProxy.getCompany().getId()).list(em);
@@ -112,7 +122,7 @@ public class ProductService extends BaseService {
     
     @Transactional
 	public ApiPaginatedList<ApiProductListResponse> listUserProducts1(Long userId, ApiListProductsRequest request) {
-    	return PaginationTools.createPaginatedResponse(em, request, () -> userProductListQueryObject1(userId, request)); 
+    	return PaginationTools.createPaginatedResponse(em, request, () -> userProductListQueryObject1(userId, request));
 	}
 
     @Transactional
@@ -190,12 +200,6 @@ public class ProductService extends BaseService {
 		return ProductApiTools.toApiProductLabel(pl);
 	}
 
-    @Transactional
-	public ApiProductLabelValues getProductLabelValues(CustomUserDetails authUser, Long id) throws ApiException {
-		ProductLabel pl = productQueries.fetchProductLabelAssoc(authUser, id);
-		return productApiTools.toApiProductLabelValues(authUser.getUserId(), pl);
-	}
-    
     @Transactional
 	public ApiProductLabelContent getProductLabelContent(CustomUserDetails authUser, Long id) throws ApiException {
 		ProductLabel pl = productQueries.fetchProductLabelAssoc(authUser, id);
@@ -278,12 +282,14 @@ public class ProductService extends BaseService {
 	public ApiProductLabelValuesExtended getProductLabelValuesPublic(String uid) throws ApiException {
 		ProductLabel pl = fetchProductLabelPublic(uid);
 		ApiProductLabelValuesExtended aplx = new ApiProductLabelValuesExtended();
-		
-		productApiTools.updateApiProductLabelValues(null, pl, aplx);
 
-		productApiTools.loadBusinessToCustomerSettings(pl, aplx);
+		try (StorageKeyCache.PublicScope ignored = StorageKeyCache.forPublicLabel(uid)) {
+			productApiTools.updateApiProductLabelValues(null, pl, aplx);
 
-		productApiTools.loadBusinessToCustomerMedia(aplx, getCompanyDocuments(pl));
+			productApiTools.loadBusinessToCustomerSettings(pl, aplx);
+
+			productApiTools.loadBusinessToCustomerMedia(aplx, getCompanyDocuments(pl));
+		}
 
 		aplx.numberOfBatches = Queries.getCountBy(em, ProductLabelBatch.class, ProductLabelBatch::getLabel, pl);
 		aplx.checkAuthenticityCount = countBatchFields(pl, ProductLabelBatch::getCheckAuthenticity, true);
@@ -345,13 +351,6 @@ public class ProductService extends BaseService {
 		return new ApiDefaultResponse();
 	}    
 
-    @Transactional
-	public ApiDefaultResponse updateProductLabelValues(CustomUserDetails authUser, ApiProductLabelUpdateValues request) throws ApiException {
-		ProductLabel pl = productQueries.fetchProductLabelAssoc(authUser, request.id);
-		productApiTools.updateProductLabelFields(authUser.getUserId(), pl, request);
-		return new ApiDefaultResponse();
-	}
-    
     @Transactional
 	public ApiDefaultResponse updateProductLabelContent(CustomUserDetails authUser, ApiProductLabelContent request) throws ApiException {
 		ProductLabel pl = productQueries.fetchProductLabelAssoc(authUser, request.labelId);
@@ -435,7 +434,13 @@ public class ProductService extends BaseService {
     	ProductLabel pl = productQueries.fetchProductLabelAssoc(authUser, request.id);
     	switch (action) {
     		case PUBLISH_LABEL: pl.setStatus(ProductLabelStatus.PUBLISHED); break;
-    		case UNPUBLISH_LABEL: pl.setStatus(ProductLabelStatus.UNPUBLISHED); break;
+		case UNPUBLISH_LABEL:
+			pl.setStatus(ProductLabelStatus.UNPUBLISHED);
+			StorageKeyCache.invalidatePublicLabel(pl.getUuid());
+			if (!hasPublishedLabel(pl.getProduct().getId())) {
+				StorageKeyCache.invalidatePublicProduct(pl.getProduct().getId());
+			}
+			break;
     		default: throw new ApiException(ApiStatus.INVALID_REQUEST, "Invalid action");
     	}
 	}
@@ -495,16 +500,22 @@ public class ProductService extends BaseService {
 	}
 
     @Transactional
-	public ApiProductLabelBatch getProductLabelBatchPublic(String uid, String number) {
+	public ApiProductLabelBatch getProductLabelBatchPublic(String uid, String number) throws ApiException {
+		fetchProductLabelPublic(uid);
     	ProductLabelBatch plbProxy = Torpedo.from(ProductLabelBatch.class);
     	Torpedo.where(plbProxy.getLabel().getUuid()).eq(uid).
     		and(plbProxy.getNumber()).eq(number);
     	Optional<ProductLabelBatch> plb = Torpedo.select(plbProxy).get(em);
-    	return plb.isPresent() ? ProductApiTools.toApiProductLabelBatch(null, plb.get()) : null;
+		if (plb.isEmpty()) {
+			return null;
+		}
+		try (StorageKeyCache.PublicScope ignored = StorageKeyCache.forPublicLabel(uid)) {
+			return ProductApiTools.toApiProductLabelBatch(null, plb.get());
+		}
 	}
 
     @Transactional
-	public boolean checkProductLabelBatchAuthenticityPublic(String labelUid, ApiProductLabelBatchCheckAuthenticity request, HttpServletRequest servletRequest) {
+	public boolean checkProductLabelBatchAuthenticityPublic(String labelUid, ApiProductLabelBatchCheckAuthenticity request, HttpServletRequest servletRequest) throws ApiException {
     	boolean response = false;
     	ApiProductLabelBatch b = getProductLabelBatchPublic(labelUid, request.number);
     	
@@ -522,7 +533,7 @@ public class ProductService extends BaseService {
 	}
 
     @Transactional
-	public List<ApiLocation> checkProductLabelBatchOriginPublic(String labelUid, ApiProductLabelBatchCheckOrigin request, HttpServletRequest servletRequest) {
+	public List<ApiLocation> checkProductLabelBatchOriginPublic(String labelUid, ApiProductLabelBatchCheckOrigin request, HttpServletRequest servletRequest) throws ApiException {
     	ApiProductLabelBatch b = getProductLabelBatchPublic(labelUid, request.number);
     	List<ApiLocation> response;
     	
@@ -574,8 +585,21 @@ public class ProductService extends BaseService {
     	
 		if (kb == null) {
 			throw new ApiException(ApiStatus.INVALID_REQUEST, "Invalid id");
-		}		    	
-    	return productApiTools.toApiKnowledgeBlog(null, kb);
+		}
+		checkProductHasPublishedLabel(kb.getProduct().getId());
+		try (StorageKeyCache.PublicScope ignored = StorageKeyCache.forPublicProduct(kb.getProduct().getId())) {
+			return productApiTools.toApiKnowledgeBlog(null, kb);
+		}
+	}
+
+	public MediaObject getPublicDocument(String storageKey) throws ApiException {
+		validatePublicStorageKey(storageKey);
+		return commonService.getPublicDocument(storageKey, null);
+	}
+
+	public MediaObject getPublicImage(String storageKey, String size) throws ApiException {
+		validatePublicStorageKey(storageKey);
+		return commonService.getPublicImage(storageKey, size);
 	}
     
     @Transactional
@@ -607,6 +631,7 @@ public class ProductService extends BaseService {
     
     @Transactional
 	public ApiPaginatedList<ApiProductLabelFeedback> listProductLabelFeedbacks(String labelUid, ApiListProductLabelFeedbackRequest request) throws ApiException {
+		fetchProductLabelPublic(labelUid);
     	return PaginationTools.createPaginatedResponse(em, request, () -> feedbackListQueryObject(labelUid, request), 
     			ProductApiTools::toApiProductLabelFeedback); 
 	}
@@ -845,6 +870,25 @@ public class ProductService extends BaseService {
 			throw new ApiException(ApiStatus.INVALID_REQUEST, "Invalid label uid");
 		}		
 		return pl;
+	}
+
+	private void validatePublicStorageKey(String tempKey) throws ApiException {
+		publicMediaAuthorizationService.validate(tempKey);
+	}
+
+	private boolean hasPublishedLabel(Long productId) {
+		Long count = em.createQuery("SELECT COUNT(pl) FROM ProductLabel pl WHERE pl.product.id = :productId "
+				+ "AND pl.status = :status", Long.class)
+				.setParameter("productId", productId)
+				.setParameter("status", ProductLabelStatus.PUBLISHED)
+				.getSingleResult();
+		return count > 0;
+	}
+
+	private void checkProductHasPublishedLabel(Long productId) throws ApiException {
+		if (!hasPublishedLabel(productId)) {
+			throw new ApiException(ApiStatus.INVALID_REQUEST, "Product has no published labels");
+		}
 	}
 
 	private ProductLabel fetchProductLabel(Long id) throws ApiException {

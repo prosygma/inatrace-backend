@@ -2,7 +2,10 @@ package com.abelium.inatrace.db.entities.payment;
 
 import com.abelium.inatrace.db.base.BaseEntity;
 import com.abelium.inatrace.db.entities.common.ActivityProof;
-import jakarta.persistence.*;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 
 @Entity
 public class BulkPaymentActivityProof extends BaseEntity{
