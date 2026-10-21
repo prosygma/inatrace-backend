@@ -61,8 +61,6 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.SimpleDateFormat;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
@@ -331,16 +329,6 @@ public class CompanyService extends BaseService {
 		return companyApiTools.toApiUserCustomer(userCustomer, user.getUserId(), language);
 	}
 
-	public boolean existsUserCustomer_old(ApiUserCustomer apiUserCustomer) {
-		List<UserCustomer> userCustomerList = em.createNamedQuery("UserCustomer.getUserCustomerByNameSurnameAndCity", UserCustomer.class)
-				.setParameter("companyId", apiUserCustomer.getCompanyId())
-				.setParameter("name", apiUserCustomer.getName())
-				.setParameter("surname", apiUserCustomer.getSurname())
-				.setParameter("city", apiUserCustomer.getLocation().getAddress().getCity()) //  getVillage())
-				.getResultList();
-		return !userCustomerList.isEmpty();
-	}
-
 	public boolean existsUserCustomer(ApiUserCustomer apiUserCustomer) {
 		return !findMatchingUserCustomers(apiUserCustomer).isEmpty();
 	}
@@ -353,9 +341,10 @@ public class CompanyService extends BaseService {
 	 */
 	private List<UserCustomer> findMatchingUserCustomers(ApiUserCustomer apiUserCustomer) {
 		if (apiUserCustomer.getFarmerCompanyInternalId() != null) {
-			List<UserCustomer> byInternalId = em.createQuery(
-							"SELECT uc FROM UserCustomer uc WHERE uc.farmerCompanyInternalId = :internalId",
+			List<UserCustomer> byInternalId = em.createNamedQuery(
+							"UserCustomer.getUserCustomerByCompanyAndInternalId",
 							UserCustomer.class)
+					.setParameter("companyId", apiUserCustomer.getCompanyId())
 					.setParameter("internalId", apiUserCustomer.getFarmerCompanyInternalId())
 					.getResultList();
 
@@ -442,18 +431,7 @@ public class CompanyService extends BaseService {
 			plot.setSynchronisationDate(new Date());
 			plot.setCollectorId(getCurrentUserId());
 
-			for (ApiPlotCoordinate apiPlotCoordinate : apiPlot.getCoordinates()) {
-				PlotCoordinate plotCoordinate = new PlotCoordinate();
-                BigDecimal lat = BigDecimal.valueOf(centroid[0])
-                        .setScale(6, RoundingMode.HALF_UP);
-                BigDecimal lon = BigDecimal.valueOf(centroid[1])
-                        .setScale(6, RoundingMode.HALF_UP);
-                plotCoordinate.setLatitude(lat.doubleValue());
-                plotCoordinate.setLongitude(lon.doubleValue());
-
-				plotCoordinate.setPlot(plot);
-				plot.getCoordinates().add(plotCoordinate);
-			}
+			populatePlotCoordinates(plot, apiPlot.getCoordinates());
 
 			// Generate Plot GeoID
 			plot.setGeoId(generatePlotGeoID(plot.getCoordinates()));
@@ -1085,10 +1063,6 @@ public class CompanyService extends BaseService {
 
 		UserCustomerLocation userCustomerLocation = new UserCustomerLocation();
 		if (apiUserCustomer.getLocation() != null) {
-			// A farmer may have an address and no coordinates - a spreadsheet import fills the
-			// address columns far more often than the optional latitude/longitude ones. Both
-			// the API model and the entity hold a nullable Double, so carry the null through
-			// instead of unboxing it, which used to fail the whole import with a 500.
 			userCustomerLocation.setLatitude(roundCoordinate(apiUserCustomer.getLocation().getLatitude()));
 			userCustomerLocation.setLongitude(roundCoordinate(apiUserCustomer.getLocation().getLongitude()));
 			userCustomerLocation.setPubliclyVisible(apiUserCustomer.getLocation().getPubliclyVisible());
@@ -1196,21 +1170,8 @@ public class CompanyService extends BaseService {
                 plot.setCollectorId(getCurrentUserId());
 				plot.setLastUpdated(new Date());
 
-                // Initialiser avec LinkedHashSet pour préserver l'ordre
                 plot.setCoordinates(new ArrayList<>());
-
-				for (ApiPlotCoordinate apiPlotCoordinate : apiPlot.getCoordinates()) {
-					PlotCoordinate plotCoordinate = new PlotCoordinate();
-                    BigDecimal lat = BigDecimal.valueOf(apiPlotCoordinate.getLatitude())
-                            .setScale(6, RoundingMode.HALF_UP);
-                    BigDecimal lon = BigDecimal.valueOf(apiPlotCoordinate.getLongitude())
-                            .setScale(6, RoundingMode.HALF_UP);
-                    plotCoordinate.setLatitude(lat.doubleValue());
-                    plotCoordinate.setLongitude(lon.doubleValue());
-					plotCoordinate.setPlot(plot);
-					plot.getCoordinates().add(plotCoordinate);
-
-				}
+                populatePlotCoordinates(plot, apiPlot.getCoordinates());
 
 				// Generate Plot GeoID
 				plot.setGeoId(generatePlotGeoID(plot.getCoordinates()));
@@ -1220,17 +1181,6 @@ public class CompanyService extends BaseService {
 		}
 
 		return companyApiTools.toApiUserCustomer(userCustomer, user.getUserId(), language);
-	}
-
-	/**
-	 * Rounds a coordinate to the six decimal places the rest of the system stores, passing a
-	 * missing coordinate through untouched. Latitude and longitude are optional on a farmer's
-	 * address, so a null here is ordinary data, not an error.
-	 */
-	static Double roundCoordinate(Double coordinate) {
-		return coordinate == null
-				? null
-				: BigDecimal.valueOf(coordinate).setScale(6, RoundingMode.HALF_UP).doubleValue();
 	}
 
 	@Transactional
@@ -1367,31 +1317,10 @@ public class CompanyService extends BaseService {
 					.filter(p -> p.getId() !=  null && p.getId().equals(apiPlot.getId())).findFirst()
 					.orElse(new Plot());
 
-			plot.getCoordinates().removeIf(coordinate -> apiPlot.getCoordinates().stream()
-					.noneMatch(apiCoordinate -> coordinate.getId().equals(apiCoordinate.getId())));
-
-            plot.setCoordinates(new ArrayList<>());
-
-			for (ApiPlotCoordinate apiPlotCoordinate : apiPlot.getCoordinates()) {
-				PlotCoordinate plotCoordinate = plot.getCoordinates().stream()
-						.filter(p -> p.getId() != null && p.getId()
-								.equals(apiPlotCoordinate.getId()))
-						.findFirst()
-						.orElse(new PlotCoordinate());
-
-                BigDecimal lat = BigDecimal.valueOf(apiPlotCoordinate.getLatitude())
-                        .setScale(6, RoundingMode.HALF_UP);
-                BigDecimal lon = BigDecimal.valueOf(apiPlotCoordinate.getLongitude())
-                        .setScale(6, RoundingMode.HALF_UP);
-
-				plotCoordinate.setLatitude(lat.doubleValue());
-				plotCoordinate.setLongitude(lon.doubleValue());
-
-				if (plotCoordinate.getId() == null) {
-					plotCoordinate.setPlot(plot);
-					plot.getCoordinates().add(plotCoordinate);
-				}
-			}
+			// Rebuild the coordinate set: clear (so orphanRemoval deletes the old rows instead of
+			// leaving duplicates) then repopulate with de-duplicated, order-repaired coordinates.
+			plot.getCoordinates().clear();
+			populatePlotCoordinates(plot, apiPlot.getCoordinates());
 
 			plot.setPlotName(apiPlot.getPlotName());
 			plot.setNumberOfPlants(apiPlot.getNumberOfPlants());
@@ -1562,50 +1491,50 @@ public class CompanyService extends BaseService {
 					ApiPlot apiPlot = new ApiPlot();
 					apiPlot.setPlotName("Plot " + plotIndex++);
 
-						double polygonSizeInHa = TurfMeasurement.area(feature) / SQUARE_METRES_PER_HECTARE;
-						apiPlot.setSize(Math.floor(polygonSizeInHa * 100) / 100);
-						apiPlot.setUnit("ha");
-                        apiPlot.setCollectorId(userId);
-                        apiPlot.setSynchronisationDate(new Date());
+					double polygonSizeInHa = TurfMeasurement.area(feature) / SQUARE_METRES_PER_HECTARE;
+					apiPlot.setSize(Math.floor(polygonSizeInHa * 100) / 100);
+					apiPlot.setUnit("ha");
+					apiPlot.setCollectorId(userId);
+					apiPlot.setSynchronisationDate(new Date());
 
-                        Feature centroidFeature = TurfMeasurement.center(feature);
-                        Point centroidPoint = (Point) centroidFeature.geometry();
-                        assert centroidPoint != null;
-                        BigDecimal latCenter = BigDecimal.valueOf(centroidPoint.longitude())
-                                .setScale(6, RoundingMode.HALF_UP);
-                        BigDecimal lonCenter = BigDecimal.valueOf(centroidPoint.latitude())
-                                .setScale(6, RoundingMode.HALF_UP);
-                        apiPlot.setCenterLatitude(latCenter.doubleValue());
-                        apiPlot.setCenterLongitude(lonCenter.doubleValue());
+					Feature centroidFeature = TurfMeasurement.center(feature);
+					Point centroidPoint = (Point) centroidFeature.geometry();
+					assert centroidPoint != null;
+					BigDecimal latCenter = BigDecimal.valueOf(centroidPoint.longitude())
+							.setScale(6, RoundingMode.HALF_UP);
+					BigDecimal lonCenter = BigDecimal.valueOf(centroidPoint.latitude())
+							.setScale(6, RoundingMode.HALF_UP);
+					apiPlot.setCenterLatitude(latCenter.doubleValue());
+					apiPlot.setCenterLongitude(lonCenter.doubleValue());
 
 
-						List<Point> polygonCoordinates = polygon.coordinates().get(0);
+					List<Point> polygonCoordinates = polygon.coordinates().get(0);
 
-						apiPlot.setCoordinates(polygonCoordinates.stream().map(lngLat -> {
-							ApiPlotCoordinate coordinate = new ApiPlotCoordinate();
-                            BigDecimal lattCenter = BigDecimal.valueOf(lngLat.latitude())
-                                    .setScale(6, RoundingMode.HALF_UP);
-                            BigDecimal lontCenter = BigDecimal.valueOf(lngLat.longitude())
-                                    .setScale(6, RoundingMode.HALF_UP);
-							coordinate.setLongitude(lontCenter.doubleValue());
-							coordinate.setLatitude(lattCenter.doubleValue());
-							return coordinate;
-						}).collect(Collectors.toList()));
+					apiPlot.setCoordinates(polygonCoordinates.stream().map(lngLat -> {
+						ApiPlotCoordinate coordinate = new ApiPlotCoordinate();
+						BigDecimal lattCenter = BigDecimal.valueOf(lngLat.latitude())
+								.setScale(6, RoundingMode.HALF_UP);
+						BigDecimal lontCenter = BigDecimal.valueOf(lngLat.longitude())
+								.setScale(6, RoundingMode.HALF_UP);
+						coordinate.setLongitude(lontCenter.doubleValue());
+						coordinate.setLatitude(lattCenter.doubleValue());
+						return coordinate;
+					}).collect(Collectors.toList()));
 
 					ApiProductType apiProductType = new ApiProductType();
 					apiProductType.setId(userCustomer.getProductTypes().stream().toList().get(0).getProductType().getId());
 					apiPlot.setCrop(apiProductType);
 
-						createUserCustomerPlot(id, authUser, Language.EN, apiPlot, userId);
+					createUserCustomerPlot(id, authUser, Language.EN, apiPlot, userId);
 
 				} else if (feature.geometry() instanceof Point) {
 
 					Point point = (Point) feature.geometry();
 
-						ApiPlot apiPlot = new ApiPlot();
-						apiPlot.setPlotName("Point " + pointIndex++);
-                        apiPlot.setCollectorId(userId);
-                        apiPlot.setSynchronisationDate(new Date());
+					ApiPlot apiPlot = new ApiPlot();
+					apiPlot.setPlotName("Point " + pointIndex++);
+					apiPlot.setCollectorId(userId);
+					apiPlot.setSynchronisationDate(new Date());
 
 					ApiPlotCoordinate coordinate = new ApiPlotCoordinate();
 					coordinate.setLongitude(point.longitude());
@@ -1616,10 +1545,10 @@ public class CompanyService extends BaseService {
 					apiProductType.setId(userCustomer.getProductTypes().stream().toList().get(0).getProductType().getId());
 					apiPlot.setCrop(apiProductType);
 
-						createUserCustomerPlot(id, authUser, Language.EN, apiPlot, userId);
-					}
+					createUserCustomerPlot(id, authUser, Language.EN, apiPlot, userId);
 				}
 			}
+		}
     }
 
 	@Transactional
@@ -1670,25 +1599,10 @@ public class CompanyService extends BaseService {
             plot.setCenterLongitude(0.0);
         }
 
-        // INITIALISATION EXPLICITE AVEC LinkedHashSet
         plot.setCoordinates(new ArrayList<>());
+        populatePlotCoordinates(plot, request.getCoordinates());
 
-        int order = 0; // pour save lordre des coordonnées
-		for (ApiPlotCoordinate apiPlotCoordinate : request.getCoordinates()) {
-			PlotCoordinate plotCoordinate = new PlotCoordinate();
-            BigDecimal lat = BigDecimal.valueOf(apiPlotCoordinate.getLatitude())
-                    .setScale(6, RoundingMode.HALF_UP);
-            BigDecimal lon = BigDecimal.valueOf(apiPlotCoordinate.getLongitude())
-                    .setScale(6, RoundingMode.HALF_UP);
-            plotCoordinate.setLatitude(lat.doubleValue());
-            plotCoordinate.setLongitude(lon.doubleValue());
-            plotCoordinate.setCoordinateOrder(order++); // Définir l'ordre
-			plotCoordinate.setPlot(plot);
-			plot.getCoordinates().add(plotCoordinate);
-
-		}
-
-       // Generate Plot GeoID
+		// Generate Plot GeoID
 		plot.setGeoId(generatePlotGeoID(plot.getCoordinates()));
 
 		em.persist(plot);
@@ -1731,8 +1645,8 @@ public class CompanyService extends BaseService {
 		int order = 0;
 		for (double[] point : ordered) {
 			PlotCoordinate plotCoordinate = new PlotCoordinate();
-			plotCoordinate.setLatitude(point[0]);
-			plotCoordinate.setLongitude(point[1]);
+			plotCoordinate.setLatitude(roundCoordinate(point[0]));
+			plotCoordinate.setLongitude(roundCoordinate(point[1]));
 			plotCoordinate.setCoordinateOrder(order++);
 			plotCoordinate.setPlot(plot);
 			plot.getCoordinates().add(plotCoordinate);
@@ -1873,6 +1787,21 @@ public class CompanyService extends BaseService {
 	/** Orientation sign of (b-a) x (c-a) using x = longitude (index 1), y = latitude (index 0). */
 	private static boolean ccw(double[] a, double[] b, double[] c) {
 		return (b[1] - a[1]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[1] - a[1]) > 0;
+	}
+
+	/**
+	 * Rounds a stored coordinate to {@link #COORDINATE_DECIMAL_PLACES} decimal places. Applied to
+	 * every coordinate before it is persisted, so that the plot GeoID - which is generated from the
+	 * persisted coordinates - matches the ring that is actually stored.
+	 *
+	 * @param value coordinate to round, may be null
+	 * @return the rounded value, or null if the input was null
+	 */
+	static Double roundCoordinate(Double value) {
+		if (value == null) {
+			return null;
+		}
+		return BigDecimal.valueOf(value).setScale(COORDINATE_DECIMAL_PLACES, RoundingMode.HALF_UP).doubleValue();
 	}
 
 	private String generatePlotGeoID(List<PlotCoordinate> coordinatesSet) {
