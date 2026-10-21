@@ -116,6 +116,7 @@ class FarmerAndPlotApiTest extends AbstractMySqlIntegrationTest {
 	private Long acmePlotId;
 	private Long acmeSecondFarmerPlotId;
 	private Long coffeeProductTypeId;
+	private Long rwandaId;
 
 	private Cookie aliceSession;
 	private Cookie bobSession;
@@ -168,6 +169,7 @@ class FarmerAndPlotApiTest extends AbstractMySqlIntegrationTest {
 		acmePlotId = acmePlot.getId();
 		acmeSecondFarmerPlotId = acmeSecondPlot.getId();
 		coffeeProductTypeId = coffee.getId();
+		rwandaId = rwanda.getId();
 
 		aliceSession = sessionCookie(alice);
 		bobSession = sessionCookie(bob);
@@ -551,6 +553,85 @@ class FarmerAndPlotApiTest extends AbstractMySqlIntegrationTest {
 		em.flush();
 		assertEquals(FARMER_SURNAME, em.find(UserCustomer.class, acmeFarmerId).getSurname(),
 				"the farmer's own company owns this record; a stranger's edit must not stick");
+	}
+
+	// ------------------------------------------------------------------ product types are required
+
+	@Test
+	@DisplayName("A farmer cannot be added without a product type")
+	void farmerWithoutProductTypeIsRefused() throws Exception {
+
+		MvcResult result = mockMvc.perform(post("/api/company/userCustomers/add/" + acmeId)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(newFarmerJson("Notype", "[]"))
+						.cookie(aliceSession))
+				.andReturn();
+
+		assertEquals(400, result.getResponse().getStatus(), body(result));
+		assertTrue(body(result).contains("A farmer needs at least one product type."), body(result));
+		assertEquals(0L, farmersNamed("Notype"), "nothing may be stored for a refused farmer");
+	}
+
+	@Test
+	@DisplayName("The missing product type message follows the caller's language")
+	void missingProductTypeMessageIsLocalized() throws Exception {
+
+		MvcResult result = mockMvc.perform(post("/api/company/userCustomers/add/" + acmeId)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"type\":\"FARMER\",\"name\":\"Awa\",\"surname\":\"Nolist\"}")
+						.header("language", "FR")
+						.cookie(aliceSession))
+				.andReturn();
+
+		assertEquals(400, result.getResponse().getStatus(), body(result));
+		assertTrue(body(result).contains("Un producteur doit avoir au moins un type de produit."), body(result));
+	}
+
+	@Test
+	@DisplayName("A farmer with a product type is added")
+	void farmerWithProductTypeIsAdded() throws Exception {
+
+		MvcResult result = mockMvc.perform(post("/api/company/userCustomers/add/" + acmeId)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(newFarmerJson("Withtype", "[{\"id\":" + coffeeProductTypeId + "}]"))
+						.cookie(aliceSession))
+				.andReturn();
+
+		assertEquals(200, result.getResponse().getStatus(), body(result));
+		assertEquals(1L, farmersNamed("Withtype"));
+	}
+
+	@Test
+	@DisplayName("Editing a farmer cannot remove the last product type")
+	void lastProductTypeCannotBeRemoved() throws Exception {
+
+		MvcResult result = mockMvc.perform(put("/api/company/userCustomers/edit")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"id\":" + acmeFarmerId + ",\"type\":\"FARMER\",\"name\":\"" + FARMER_NAME
+								+ "\",\"surname\":\"Emptied\",\"productTypes\":[]}")
+						.cookie(aliceSession))
+				.andReturn();
+
+		assertEquals(400, result.getResponse().getStatus(), body(result));
+		em.flush();
+		em.clear();
+		UserCustomer farmer = em.find(UserCustomer.class, acmeFarmerId);
+		assertEquals(FARMER_SURNAME, farmer.getSurname(), "a refused edit must not stick");
+		assertEquals(1, farmer.getProductTypes().size());
+	}
+
+	private String newFarmerJson(String surname, String productTypes) {
+		return "{\"type\":\"FARMER\",\"name\":\"Awa\",\"surname\":\"" + surname + "\","
+				+ "\"location\":{\"latitude\":-1.95,\"longitude\":30.06,\"address\":{\"country\":{\"id\":" + rwandaId + "}}},"
+				+ "\"productTypes\":" + productTypes + ","
+				+ "\"associations\":[],\"cooperatives\":[],\"certifications\":[],\"plots\":[]}";
+	}
+
+	private long farmersNamed(String surname) {
+		em.flush();
+		return em.createQuery("SELECT COUNT(uc) FROM UserCustomer uc WHERE uc.surname = :surname", Long.class)
+				.setParameter("surname", surname)
+				.getSingleResult();
 	}
 
 	@Test

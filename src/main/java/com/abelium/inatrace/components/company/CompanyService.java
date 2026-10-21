@@ -1032,6 +1032,10 @@ public class CompanyService extends BaseService {
 		Company company = companyQueries.fetchCompany(companyId);
 		PermissionsUtil.checkUserIfCompanyEnrolled(company.getUsers().stream().toList(), user);
 
+		if (apiUserCustomer.getProductTypes() == null || apiUserCustomer.getProductTypes().isEmpty()) {
+			throw productTypesRequired(language);
+		}
+
 		UserCustomer userCustomer = new UserCustomer();
 		userCustomer.setCompany(company);
 		userCustomer.setFarmerCompanyInternalId(apiUserCustomer.getFarmerCompanyInternalId());
@@ -1196,6 +1200,12 @@ public class CompanyService extends BaseService {
 
 		UserCustomer userCustomer = fetchUserCustomer(apiUserCustomer.getId());
 		PermissionsUtil.checkUserIfCompanyEnrolled(userCustomer.getCompany().getUsers().stream().toList(), user);
+
+		// A null list keeps the current product types, so only refuse when the farmer would end up with none.
+		boolean keepsCurrentTypes = apiUserCustomer.getProductTypes() == null;
+		if (keepsCurrentTypes ? userCustomer.getProductTypes().isEmpty() : apiUserCustomer.getProductTypes().isEmpty()) {
+			throw productTypesRequired(language);
+		}
 
 		userCustomer.setName(apiUserCustomer.getName());
 		userCustomer.setSurname(apiUserCustomer.getSurname());
@@ -1393,6 +1403,12 @@ public class CompanyService extends BaseService {
 		}
 
 		return companyApiTools.toApiUserCustomer(userCustomer, user.getUserId(), language);
+	}
+
+	/** Every farmer needs at least one product type: the web and mobile forms require it, and so does the API. */
+	private ApiException productTypesRequired(Language language) {
+		return new ApiException(ApiStatus.VALIDATION_ERROR, messageSource.getMessage("farmer.productTypes.required", null,
+				Locale.forLanguageTag((language != null ? language : Language.EN).name())));
 	}
 
 	private void updateUserCustomerProductTypes(ApiUserCustomer apiUserCustomer, UserCustomer userCustomer) throws ApiException {

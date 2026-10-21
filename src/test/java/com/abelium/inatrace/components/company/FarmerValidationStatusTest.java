@@ -1,6 +1,8 @@
 package com.abelium.inatrace.components.company;
 
 import org.springframework.test.context.ActiveProfiles;
+import com.abelium.inatrace.components.product.api.ApiProductType;
+import com.abelium.inatrace.db.entities.codebook.ProductType;
 import com.abelium.inatrace.support.AbstractMySqlIntegrationTest;
 import com.abelium.inatrace.api.ApiStatus;
 import com.abelium.inatrace.api.errors.ApiException;
@@ -56,6 +58,7 @@ class FarmerValidationStatusTest extends AbstractMySqlIntegrationTest {
     private Long companyId;
     private Long adminId;
     private Long collectorId;
+    private Long productTypeId;
     private final List<Long> companyUserIds = new ArrayList<>();
     private final List<Long> farmerIds = new ArrayList<>();
 
@@ -71,9 +74,15 @@ class FarmerValidationStatusTest extends AbstractMySqlIntegrationTest {
             User collector = newUser("collector");
             companyUserIds.add(enrol(company, admin, CompanyUserRole.COMPANY_ADMIN));
             companyUserIds.add(enrol(company, collector, CompanyUserRole.COMPANY_USER));
+            // Farmers need at least one product type.
+            ProductType productType = new ProductType();
+            productType.setCode("PT-" + runId);
+            productType.setName("Cocoa " + runId);
+            em.persist(productType);
             em.flush();
 
             companyId = company.getId();
+            productTypeId = productType.getId();
             adminId = admin.getId();
             collectorId = collector.getId();
         });
@@ -110,6 +119,7 @@ class FarmerValidationStatusTest extends AbstractMySqlIntegrationTest {
             remove(Company.class, companyId);
             remove(User.class, adminId);
             remove(User.class, collectorId);
+            remove(ProductType.class, productTypeId);
         });
     }
 
@@ -131,6 +141,9 @@ class FarmerValidationStatusTest extends AbstractMySqlIntegrationTest {
         request.setType(UserCustomerType.FARMER);
         request.setName(name);
         request.setSurname("Validation");
+        ApiProductType productType = new ApiProductType();
+        productType.setId(productTypeId);
+        request.setProductTypes(List.of(productType));
         // A client-sent state must be ignored
         request.setValidationStatus(FarmerValidationStatus.VALIDATED);
         ApiUserCustomer created = new TransactionTemplate(txManager).execute(status -> {
