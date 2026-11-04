@@ -52,6 +52,18 @@ Run it from `inatrace-backend/`:
 mvn -q -DargLine=-Dapi.version=1.43 -Dtest=DatabaseUpgradeTest test
 ```
 
+## Cameroon line
+
+The `cameroon-rebased` branch adds five SQL migrations on top of this path
+(`TARGET_SQL_MIGRATIONS`): French in every `language` enum, the plot center
+point, and three data backfills (plot synchronisation date, Cameroon country,
+farmer validation status). They are checked by version, script and type, and
+must carry a checksum. The expected schema delta also allows the Hibernate
+columns of those features (`CAMEROON_ADDED_COLUMNS`: plot center point,
+collector and synchronisation date, plot coordinate order, farmer validation
+status). The only change allowed to an existing column is a `language` enum
+gaining `FR`.
+
 ## Maintaining this upgrade path
 
 Changes to migrations, entity columns, indexes or foreign keys must be reviewed

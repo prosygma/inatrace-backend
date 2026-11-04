@@ -65,6 +65,20 @@ class DatabaseUpgradeTest {
             "2026.10.13.12.00", "com.abelium.inatrace.db.migrations.V2026_10_13_12_00__Add_Document_Uploaded_By",
             "2026.10.17.12.00", "com.abelium.inatrace.db.migrations.V2026_10_17_12_00__Add_Authentication_Token_Expiration_Index",
             "2026.10.21.12.00", "com.abelium.inatrace.db.migrations.V2026_10_21_12_00__Deduplicate_Document_Uploader_Foreign_Keys");
+    // SQL migrations of the Cameroon line (French language, plot center point, backfills).
+    private static final Map<String, String> TARGET_SQL_MIGRATIONS = Map.of(
+            "2025.02.27.10.00", "V2025_02_27_10_00__Alter_User_translation.sql",
+            "2025.11.05.11.10", "V2025_11_05_11_10__Alter_ApiPlot.sql",
+            "2026.09.25.12.00", "V2026_09_25_12_00__Backfill_plot_synchronisation_date.sql",
+            "2026.09.25.13.00", "V2026_09_25_13_00__Add_missing_Cameroon_country.sql",
+            "2026.09.26.10.00", "V2026_09_26_10_00__Backfill_farmer_validation_status.sql");
+    // Columns the Cameroon entities add through Hibernate (prefix: table|column|type|nullable|default).
+    private static final Set<String> CAMEROON_ADDED_COLUMNS = Set.of(
+            "Plot|centerLatitude|double|YES|<NULL>|", "Plot|centerLongitude|double|YES|<NULL>|",
+            "Plot|collectorId|bigint|YES|<NULL>|", "Plot|synchronisationDate|datetime(6)|YES|<NULL>|",
+            "PlotCoordinate|coordinateOrder|int|YES|<NULL>|", "UserCustomer|validationStatus|enum(");
+    private static final String LANGUAGE_ENUM = "|language|enum('DE','EN','ES','RW')|";
+    private static final String LANGUAGE_ENUM_WITH_FR = "|language|enum('DE','EN','ES','FR','RW')|";
     private static final List<JoinColumn> LEGACY_ONE_TO_ONE_COLUMNS = List.of(
             new JoinColumn("UserCustomer", "userCustomerLocation_id"),
             new JoinColumn("Company", "logo_id"), new JoinColumn("Facility", "facilityLocation_id"),
@@ -289,12 +303,17 @@ class DatabaseUpgradeTest {
 
     private void assertTargetHistory(DataSource dataSource, Manifest manifest) throws Exception {
         try (Connection connection = dataSource.getConnection()) {
-            Set<String> actual = rows(connection, "SELECT CONCAT(version, '|', script, '|', type, '|', COALESCE(CAST(checksum AS CHAR), '<NULL>'), '|', success) FROM schema_version WHERE installed_rank > " + manifest.historyCount());
+            // SQL migrations carry a checksum; only its presence is checked here, the value is validated by Flyway.
+            Set<String> actual = rows(connection, "SELECT CONCAT(version, '|', script, '|', type, '|', "
+                    + "IF(type='SQL', IF(checksum IS NULL, '<NULL>', '<CHECKSUM>'), COALESCE(CAST(checksum AS CHAR), '<NULL>')), '|', success) "
+                    + "FROM schema_version WHERE installed_rank > " + manifest.historyCount());
             Set<String> expected = new LinkedHashSet<>();
             TARGET_MIGRATIONS.forEach((version, script) -> expected.add(version + "|" + script + "|CUSTOM|<NULL>|1"));
+            TARGET_SQL_MIGRATIONS.forEach((version, script) -> expected.add(version + "|" + script + "|SQL|<CHECKSUM>|1"));
             assertEquals(expected, actual, "Unexpected or missing migrations: extra=" + difference(actual, expected)
                     + ", missing=" + difference(expected, actual) + "; see docs/stability/database-upgrade.md");
-            assertEquals(manifest.historyCount() + TARGET_MIGRATIONS.size(), scalar(connection, "SELECT COUNT(*) FROM schema_version WHERE success"),
+            assertEquals(manifest.historyCount() + TARGET_MIGRATIONS.size() + TARGET_SQL_MIGRATIONS.size(),
+                    scalar(connection, "SELECT COUNT(*) FROM schema_version WHERE success"),
                     "Unexpected migration count; see docs/stability/database-upgrade.md");
             assertEquals(manifest.historySha256(), sourceHistorySignature(connection));
             for (Map.Entry<String, String> migration : TARGET_MIGRATIONS.entrySet()) {
@@ -464,9 +483,25 @@ class DatabaseUpgradeTest {
             SchemaSnapshot target = schemaSnapshot(connection);
             assertEquals(source.tables(), target.tables(), "Target must not add or remove tables in this upgrade path");
             Set<String> addedColumns = difference(target.columns(), source.columns());
-            assertEquals(1, addedColumns.size(), "Unexpected added columns: " + addedColumns + "; see docs/stability/database-upgrade.md");
-            assertTrue(addedColumns.iterator().next().startsWith("Document|uploadedBy_id|bigint|YES|<NULL>|"));
-            assertTrue(difference(source.columns(), target.columns()).isEmpty(), "Target must not remove source columns");
+            Set<String> removedColumns = difference(source.columns(), target.columns());
+            // The only changed source columns are language enums that gain FR; nothing else may change or disappear.
+            for (String removed : removedColumns) {
+                assertTrue(removed.contains(LANGUAGE_ENUM), "Target must not remove source columns: " + removed);
+                assertTrue(addedColumns.remove(removed.replace(LANGUAGE_ENUM, LANGUAGE_ENUM_WITH_FR)),
+                        "Language column must only gain FR: " + removed);
+            }
+            assertTrue(removedColumns.size() > 0, "The French language migration must widen the language columns");
+            Set<String> unexpected = new LinkedHashSet<>();
+            boolean uploader = false;
+            Set<String> cameroonFound = new LinkedHashSet<>();
+            for (String column : addedColumns) {
+                if (column.startsWith("Document|uploadedBy_id|bigint|YES|<NULL>|")) uploader = true;
+                else CAMEROON_ADDED_COLUMNS.stream().filter(column::startsWith).findFirst()
+                        .ifPresentOrElse(cameroonFound::add, () -> unexpected.add(column));
+            }
+            assertTrue(unexpected.isEmpty(), "Unexpected added columns: " + unexpected + "; see docs/stability/database-upgrade.md");
+            assertTrue(uploader, "Target must add Document.uploadedBy_id");
+            assertEquals(CAMEROON_ADDED_COLUMNS, cameroonFound, "Missing Cameroon columns; see docs/stability/database-upgrade.md");
             Set<String> removedIndexes = difference(source.indexes(), target.indexes());
             assertEquals(legacyUniqueIndexes(source.indexes()), removedIndexes, "Unexpected removed indexes; see docs/stability/database-upgrade.md");
             assertEquals(expectedAddedIndexes(), difference(target.indexes(), source.indexes()), "Unexpected added indexes; see docs/stability/database-upgrade.md");
@@ -610,7 +645,8 @@ class DatabaseUpgradeTest {
     private String sourceHistorySignature(Connection connection) throws Exception {
         String sql = "SELECT CONCAT_WS('|', installed_rank, COALESCE(version,''), description, "
                 + "type, script, COALESCE(CAST(checksum AS CHAR),''), success) FROM schema_version "
-                + "WHERE version IS NULL OR version NOT LIKE '2026.%' ORDER BY installed_rank";
+                + "WHERE version IS NULL OR (version NOT LIKE '2026.%' AND version NOT IN ('"
+                + String.join("','", TARGET_SQL_MIGRATIONS.keySet()) + "')) ORDER BY installed_rank";
         try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery(sql)) {
             StringBuilder history = new StringBuilder();
             while (result.next()) history.append(result.getString(1)).append('\n');
