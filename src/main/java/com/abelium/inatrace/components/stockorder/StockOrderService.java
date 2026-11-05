@@ -1,5 +1,6 @@
 package com.abelium.inatrace.components.stockorder;
 
+import com.abelium.inatrace.components.codebook.measure_unit_type.MeasureUnitWeights;
 import com.abelium.inatrace.api.ApiBaseEntity;
 import com.abelium.inatrace.api.ApiPaginatedList;
 import com.abelium.inatrace.api.ApiPaginatedRequest;
@@ -463,7 +464,7 @@ public class StockOrderService extends BaseService {
 
                     // Add stock order weights only once
                     if (!stockOrderWeights.containsKey(apiPayment.getStockOrder().getId())) {
-                        stockOrderWeights.put(apiPayment.getStockOrder().getId(), apiPayment.getStockOrder().getFulfilledQuantity().multiply(apiPayment.getStockOrder().getMeasureUnitType().getWeight()));
+                        stockOrderWeights.put(apiPayment.getStockOrder().getId(), apiPayment.getStockOrder().getFulfilledQuantity().multiply(MeasureUnitWeights.weightOrOne(apiPayment.getStockOrder().getMeasureUnitType())));
                     }
 
                     // Calculate price in USD at date
@@ -621,7 +622,7 @@ public class StockOrderService extends BaseService {
                             )
                     );
                 }
-                coffeeKg = coffeeKg.add(apiStockOrder.getFulfilledQuantity().multiply(apiStockOrder.getMeasureUnitType().getWeight()));
+                coffeeKg = coffeeKg.add(apiStockOrder.getFulfilledQuantity().multiply(MeasureUnitWeights.weightOrOne(apiStockOrder.getMeasureUnitType())));
             }
 
             if (BigDecimal.ZERO.equals(coffeeKg)) {
@@ -1421,8 +1422,8 @@ public class StockOrderService extends BaseService {
                         .map(Transaction::getOutputQuantity)
                         .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-                BigDecimal inputUnitWeight = procAction.getInputSemiProduct().getMeasurementUnitType().getWeight();
-                BigDecimal outputUnitWeight = stockOrder.getSemiProduct().getMeasurementUnitType().getWeight();
+                BigDecimal inputUnitWeight = MeasureUnitWeights.weightOrOne(procAction.getInputSemiProduct().getMeasurementUnitType());
+                BigDecimal outputUnitWeight = MeasureUnitWeights.weightOrOne(stockOrder.getSemiProduct().getMeasurementUnitType());
 
                 // Calculate the input quantity normalized in the output measuring unit (important when we have different input and output measure units)
                 BigDecimal totalInputQuantityNormalized = totalInputQuantity.divide(inputUnitWeight,
@@ -2131,7 +2132,7 @@ public class StockOrderService extends BaseService {
 
                 // Create total kigs column
                 row.createCell(8, CellType.NUMERIC);
-                Double totalKilos =apiDelivery.getTotalQuantity().doubleValue() * apiDelivery.getMeasureUnitType().getWeight().doubleValue();
+                Double totalKilos =apiDelivery.getTotalQuantity().doubleValue() * MeasureUnitWeights.weightOrOne(apiDelivery.getMeasureUnitType()).doubleValue();
                 row.getCell(8).setCellValue(totalKilos);
 
                 // sheet.autoSizeColumn(9);

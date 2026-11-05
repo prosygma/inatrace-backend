@@ -1,5 +1,6 @@
 package com.abelium.inatrace.components.dashboard;
 
+import com.abelium.inatrace.components.codebook.measure_unit_type.MeasureUnitWeights;
 import com.abelium.inatrace.api.ApiStatus;
 import com.abelium.inatrace.api.errors.ApiException;
 import com.abelium.inatrace.components.codebook.measure_unit_type.MeasureUnitTypeMapper;
@@ -504,7 +505,7 @@ public class DashboardService extends BaseService {
             return BigDecimal.ONE;
         }
 
-        return semiProduct.getMeasurementUnitType().getWeight();
+        return MeasureUnitWeights.weightOrOne(semiProduct.getMeasurementUnitType());
     }
 
     private BigDecimal calculateInputNormalisationQuotient(Long idProcessingAction) throws ApiException {
@@ -515,7 +516,7 @@ public class DashboardService extends BaseService {
                 processingAction.getInputSemiProduct().getMeasurementUnitType() == null) {
             return BigDecimal.ONE;
         }
-        BigDecimal inputWeight = processingAction.getInputSemiProduct().getMeasurementUnitType().getWeight();
+        BigDecimal inputWeight = MeasureUnitWeights.weightOrOne(processingAction.getInputSemiProduct().getMeasurementUnitType());
 
         BigDecimal outputWeight = BigDecimal.ONE;
 
@@ -523,7 +524,7 @@ public class DashboardService extends BaseService {
 
             if (processingAction.getOutputFinalProduct() != null &&
                     processingAction.getOutputFinalProduct().getMeasurementUnitType() != null) {
-                outputWeight = processingAction.getOutputFinalProduct().getMeasurementUnitType().getWeight();
+                outputWeight = MeasureUnitWeights.weightOrOne(processingAction.getOutputFinalProduct().getMeasurementUnitType());
             }
         } else {
 
@@ -534,8 +535,8 @@ public class DashboardService extends BaseService {
                     processingAction.getOutputSemiProducts().stream().toList().get(0).getOutputSemiProduct() != null &&
                     processingAction.getOutputSemiProducts().stream().toList().get(0).getOutputSemiProduct().getMeasurementUnitType() !=
                             null) {
-                outputWeight = processingAction.getOutputSemiProducts().stream().toList().get(0).getOutputSemiProduct()
-                        .getMeasurementUnitType().getWeight();
+                outputWeight = MeasureUnitWeights.weightOrOne(processingAction.getOutputSemiProducts().stream().toList().get(0)
+                        .getOutputSemiProduct().getMeasurementUnitType());
             }
         }
 
