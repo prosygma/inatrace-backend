@@ -2201,7 +2201,7 @@ public class StockOrderService extends BaseService {
         }
 
         // Set the Stock order and Processing order for which the history is calculated (including the input transaction for the Processing order)
-        stockOrderHistory.setStockOrder(StockOrderMapper.toApiStockOrderHistory(stockOrder, language));
+        stockOrderHistory.setStockOrder(StockOrderMapper.toApiStockOrderHistory(stockOrder, user != null ? user.getUserId() : null, language));
         stockOrderHistory.setProcessingOrder(ProcessingOrderMapper.toApiProcessingOrderHistory(stockOrder.getProcessingOrder(), language));
 
         if (stockOrder.getProcessingOrder() != null) {
