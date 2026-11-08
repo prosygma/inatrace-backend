@@ -228,6 +228,15 @@ public class DashboardService extends BaseService {
             throw new ApiException(ApiStatus.VALIDATION_ERROR, "AggregationType needs to be provided!");
         }
 
+        // Without a processing action there is nothing to chart: the input normalisation and the
+        // output unit are defined per action, so summing across actions would mix units. A company
+        // with no processing action yet (or a cleared "Process" filter) used to get 400
+        // "Invalid processing action ID" on every filter change; it now gets an empty chart.
+        if (apiProcessingPerformanceRequest.getProcessActionId() == null) {
+            return new ApiProcessingPerformanceTotal(apiProcessingPerformanceRequest.getAggregationType(), null,
+                    new ArrayList<>());
+        }
+
         // Input calculation query
         // Prepare groupby expression by year/month/week
         List<Expression<Integer>> aggregationInputExpressions = new ArrayList<>();
