@@ -7,11 +7,15 @@ import com.abelium.inatrace.components.product.api.ApiProductType;
 import com.abelium.inatrace.db.entities.codebook.ProductType;
 import com.abelium.inatrace.db.entities.codebook.ProductTypeTranslation;
 import com.abelium.inatrace.types.Language;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.MessageSource;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import jakarta.transaction.Transactional;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 @Lazy
@@ -19,6 +23,9 @@ import java.util.stream.Collectors;
 public class ProductTypeService extends BaseService {
 
     private static final String PRODUCT_TYPE_DOES_NOT_EXIST = "Product type does not exist!";
+
+    @Autowired
+    private MessageSource messageSource;
 
     @Transactional
     public ApiResponse<ApiBaseEntity> createProductType(ApiProductType apiProductType) throws ApiException{
@@ -135,7 +142,7 @@ public class ProductTypeService extends BaseService {
     }
 
     @Transactional
-    public ApiDefaultResponse deleteProductType(Long id) throws ApiException {
+    public ApiDefaultResponse deleteProductType(Long id, Language language) throws ApiException {
 
         if (id == null) {
             throw new ApiException(ApiStatus.INVALID_REQUEST, "Id must be provided!");
@@ -147,9 +154,60 @@ public class ProductTypeService extends BaseService {
             throw new ApiException(ApiStatus.NOT_FOUND, PRODUCT_TYPE_DOES_NOT_EXIST);
         }
 
+        // A product type still referenced by a value chain, a farmer or a plot cannot go: the delete would
+        // fail on a foreign key, and those records would lose their product type.
+        String usages = describeUsages(productType, language);
+        if (usages != null) {
+            throw new ApiException(ApiStatus.VALIDATION_ERROR, messageSource.getMessage(
+                    "productType.delete.inUse", new Object[] { productType.getName(), usages }, locale(language)));
+        }
+
         em.remove(productType);
 
         return new ApiDefaultResponse();
+    }
+
+    /**
+     * Lists what still references the product type, e.g. "2 value chain(s), 15 farmer(s)", or returns null when
+     * nothing does. Covers every foreign key to ProductType except its own translations.
+     */
+    private String describeUsages(ProductType productType, Language language) {
+
+        long valueChains = em.createQuery(
+                        "SELECT COUNT(vc) FROM ValueChain vc WHERE vc.productType = :productType", Long.class)
+                .setParameter("productType", productType)
+                .getSingleResult();
+
+        long farmers = em.createQuery(
+                        "SELECT COUNT(uc) FROM UserCustomer uc WHERE " +
+                                "EXISTS (SELECT ucpt FROM UserCustomerProductType ucpt " +
+                                "WHERE ucpt.userCustomer = uc AND ucpt.productType = :productType) OR " +
+                                "EXISTS (SELECT fpi FROM FarmPlantInformation fpi " +
+                                "WHERE fpi.userCustomer = uc AND fpi.productType = :productType)", Long.class)
+                .setParameter("productType", productType)
+                .getSingleResult();
+
+        long plots = em.createQuery(
+                        "SELECT COUNT(p) FROM Plot p WHERE p.crop = :productType", Long.class)
+                .setParameter("productType", productType)
+                .getSingleResult();
+
+        List<String> parts = new ArrayList<>();
+        if (valueChains > 0) {
+            parts.add(messageSource.getMessage("productType.delete.inUse.valueChains", new Object[] { valueChains }, locale(language)));
+        }
+        if (farmers > 0) {
+            parts.add(messageSource.getMessage("productType.delete.inUse.farmers", new Object[] { farmers }, locale(language)));
+        }
+        if (plots > 0) {
+            parts.add(messageSource.getMessage("productType.delete.inUse.plots", new Object[] { plots }, locale(language)));
+        }
+
+        return parts.isEmpty() ? null : String.join(", ", parts);
+    }
+
+    private static Locale locale(Language language) {
+        return Locale.forLanguageTag((language != null ? language : Language.EN).name());
     }
 
 }
